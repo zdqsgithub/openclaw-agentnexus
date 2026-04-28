@@ -373,10 +373,10 @@ export type PinnedDispatcherPolicy =
       pinnedHostname?: PinnedHostnameOverride;
     };
 
-function dedupeAndPreferIpv4(results: readonly LookupAddress[]): string[] {
+function dedupeAndSortFamilies(results: readonly LookupAddress[]): string[] {
   const seen = new Set<string>();
   const ipv4: string[] = [];
-  const otherFamilies: string[] = [];
+  const ipv6: string[] = [];
   for (const entry of results) {
     if (seen.has(entry.address)) {
       continue;
@@ -384,11 +384,14 @@ function dedupeAndPreferIpv4(results: readonly LookupAddress[]): string[] {
     seen.add(entry.address);
     if (entry.family === 4) {
       ipv4.push(entry.address);
-      continue;
+    } else {
+      ipv6.push(entry.address);
     }
-    otherFamilies.push(entry.address);
   }
-  return [...ipv4, ...otherFamilies];
+  if (process.env.OPENCLAW_NETWORK_FAMILY_PREFERENCE === "ipv6") {
+    return [...ipv6, ...ipv4];
+  }
+  return [...ipv4, ...ipv6];
 }
 
 export async function resolvePinnedHostnameWithPolicy(
@@ -413,9 +416,9 @@ export async function resolvePinnedHostnameWithPolicy(
     assertAllowedResolvedAddressesOrThrow(results, params.policy);
   }
 
-  // Prefer addresses returned as IPv4 by DNS family metadata before other
-  // families so Happy Eyeballs and pinned round-robin both attempt IPv4 first.
-  const addresses = dedupeAndPreferIpv4(results);
+  // Prefer addresses based on environment configuration or IPv4 by default
+  // so Happy Eyeballs and pinned round-robin behave predictably.
+  const addresses = dedupeAndSortFamilies(results);
   if (addresses.length === 0) {
     throw new Error(`Unable to resolve hostname: ${hostname}`);
   }

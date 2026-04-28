@@ -193,6 +193,9 @@ export function buildGuardedModelFetch(model: Model<Api>, timeoutMs?: number): t
       // Provider transport intentionally keeps the secure default and never
       // replays unsafe request bodies across cross-origin redirects.
       allowCrossOriginUnsafeRedirectReplay: false,
+      // Disable DNS pinning — the custom undici lookup callback hangs on
+      // Fly.io Firecracker VMs. SSRF hostname validation is still enforced.
+      pinDns: false,
       ...(requestConfig.allowPrivateNetwork ? { policy: { allowPrivateNetwork: true } } : {}),
     });
     let response = result.response;

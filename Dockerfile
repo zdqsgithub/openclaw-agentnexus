@@ -101,6 +101,20 @@ RUN pnpm canvas:a2ui:bundle || \
      echo "stub" > src/canvas-host/a2ui/.bundle.hash && \
      rm -rf vendor/a2ui apps/shared/OpenClawKit/Tools/CanvasA2UI)
 RUN pnpm build:docker
+# ── AgentNexus Fly.io SSRF DNS pinning bypass ──────────────────
+# The SSRF guard's createPinnedDispatcher() uses a custom undici lookup
+# callback that hangs on Fly.io Firecracker VMs. This sed patch forces
+# the code to always take the non-pinned dispatcher path (which still
+# validates hostnames but skips the IP-pinning that causes the hang).
+# The patch is applied post-build because the bundler (tsdown/rolldown)
+# does not reliably include source-level changes.
+RUN find dist -name '*.js' -exec grep -l 'pinDns' {} \; | while read f; do \
+      sed -i \
+        -e 's/\.pinDns *=== *false/\.pinDns === false || true/g' \
+        -e 's/pinDns *!== *false/pinDns !== true/g' \
+        "$f"; \
+      echo "[fly-patch] patched $f"; \
+    done
 # Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:build

@@ -38,6 +38,8 @@ const ensureSupportedNodeVersion = () => {
 
 ensureSupportedNodeVersion();
 
+// DNS resolution order left at Node.js default (verbatim for Fly.io compat)
+
 // https://nodejs.org/api/module.html#module-compile-cache
 if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {
   try {
@@ -189,6 +191,25 @@ if (!isHelpFastPathDisabled() && (await tryOutputBareRootHelp())) {
   // OK
 } else {
   await installProcessWarningFilter();
+
+  // ── AgentNexus Fly.io Network Fix ─────────────────────────────────────
+  // Fly.io Firecracker VMs have unreliable IPv6 routing. Node.js 20+ enables
+  // "Happy Eyeballs" (autoSelectFamily) by default, causing undici's dual-stack
+  // connection attempts to hang when IPv6 routes are black-holed. Disable it
+  // before the OpenClaw module tree loads its global undici dispatcher.
+  if (process.env.OPENCLAW_DISABLE_DNS_PINNING === "1") {
+    try {
+      const net = await import("node:net");
+      if (typeof net.setDefaultAutoSelectFamily === "function") {
+        net.setDefaultAutoSelectFamily(false);
+        console.log("[fly-fix] disabled autoSelectFamily (Happy Eyeballs)");
+      }
+    } catch (e) {
+      console.error("[fly-fix] could not disable autoSelectFamily:", e.message);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   if (await tryImport("./dist/entry.js")) {
     // OK
   } else if (await tryImport("./dist/entry.mjs")) {

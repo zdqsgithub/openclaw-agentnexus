@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { ImageContent } from "../agents/command/types.js";
 import {
   hasNonzeroUsage,
@@ -69,6 +70,9 @@ type OpenAiChatCompletionRequest = {
   user?: unknown;
 };
 
+const AGENTNEXUS_DIRECT_OPENROUTER_CHAT_ENV = "AGENTNEXUS_DIRECT_OPENROUTER_CHAT";
+const AGENTNEXUS_OPENROUTER_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
+const AGENTNEXUS_OPENROUTER_FALLBACK_MODEL = "moonshotai/kimi-k2.5";
 const DEFAULT_OPENAI_CHAT_COMPLETIONS_BODY_BYTES = 20 * 1024 * 1024;
 const IMAGE_ONLY_USER_MESSAGE = "User sent image(s) with no text.";
 const DEFAULT_OPENAI_MAX_IMAGE_PARTS = 8;
@@ -203,6 +207,234 @@ function writeUsageChunk(
     choices: [],
     usage: params.usage,
   });
+}
+
+function shouldUseAgentNexusDirectOpenRouterChat(): boolean {
+  return process.env[AGENTNEXUS_DIRECT_OPENROUTER_CHAT_ENV] === "1";
+}
+
+function readStringHeader(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value.find((item) => item.trim().length > 0);
+  }
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function normalizeDirectOpenRouterModel(modelOverride?: string): string {
+  const trimmed = modelOverride?.trim();
+  if (!trimmed || trimmed === "openclaw" || trimmed.startsWith("openclaw/")) {
+    return AGENTNEXUS_OPENROUTER_DEFAULT_MODEL;
+  }
+  return trimmed.startsWith("openrouter/") ? trimmed.slice("openrouter/".length) : trimmed;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringifyOpenAiContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((part) => {
+      if (!part || typeof part !== "object") {
+        return "";
+      }
+      const text = (part as { text?: unknown; content?: unknown }).text ??
+        (part as { text?: unknown; content?: unknown }).content;
+      return typeof text === "string" ? text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractDirectOpenRouterContent(body: Record<string, unknown>): string {
+  const choices = Array.isArray(body.choices) ? body.choices : [];
+  const first = choices[0] as
+    | {
+        message?: { content?: unknown; reasoning?: unknown };
+        delta?: { content?: unknown };
+        text?: unknown;
+      }
+    | undefined;
+  return (
+    stringifyOpenAiContent(first?.message?.content) ||
+    stringifyOpenAiContent(first?.message?.reasoning) ||
+    stringifyOpenAiContent(first?.delta?.content) ||
+    stringifyOpenAiContent(first?.text)
+  );
+}
+
+function postOpenRouterJson(params: {
+  apiKey: string;
+  payload: Record<string, unknown>;
+  signal: AbortSignal;
+}): Promise<{ statusCode: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(params.payload);
+    const req = httpsRequest("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${params.apiKey}`,
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(body)),
+        "HTTP-Referer": "https://agtnx.ai",
+        "X-Title": "AgentNexus",
+      },
+    }, (response) => {
+      const chunks: string[] = [];
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        chunks.push(String(chunk));
+      });
+      response.on("end", () => {
+        cleanup();
+        resolve({
+          statusCode: response.statusCode ?? 0,
+          text: chunks.join(""),
+        });
+      });
+    });
+
+    const cleanup = () => {
+      params.signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      req.destroy(new Error("OpenRouter request aborted"));
+    };
+
+    params.signal.addEventListener("abort", onAbort, { once: true });
+    req.setTimeout(55_000, () => {
+      req.destroy(new Error("OpenRouter request timed out"));
+    });
+    req.on("error", (err) => {
+      cleanup();
+      reject(err);
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+async function requestDirectOpenRouterCompletion(params: {
+  payload: OpenAiChatCompletionRequest;
+  modelOverride?: string;
+  signal: AbortSignal;
+}): Promise<{ body: Record<string, unknown>; model: string }> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY is not configured.");
+  }
+
+  const requestedModel = normalizeDirectOpenRouterModel(params.modelOverride);
+  const models = Array.from(new Set([requestedModel, AGENTNEXUS_OPENROUTER_FALLBACK_MODEL]));
+  const payload = params.payload as Record<string, unknown>;
+  let lastError = "unknown upstream failure";
+
+  for (const model of models) {
+    const response = await postOpenRouterJson({
+      apiKey,
+      payload: {
+        ...payload,
+        model,
+        stream: false,
+      },
+      signal: params.signal,
+    });
+    const body = parseJsonObject(response.text);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return { body, model };
+    }
+    lastError = `OpenRouter HTTP ${response.statusCode} for ${model}`;
+  }
+
+  throw new Error(lastError);
+}
+
+async function handleAgentNexusDirectOpenRouterChat(params: {
+  payload: OpenAiChatCompletionRequest;
+  res: ServerResponse;
+  runId: string;
+  model: string;
+  modelOverride?: string;
+  stream: boolean;
+  streamIncludeUsage: boolean;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  try {
+    const upstream = await requestDirectOpenRouterCompletion({
+      payload: params.payload,
+      modelOverride: params.modelOverride,
+      signal: params.signal,
+    });
+    const content =
+      extractDirectOpenRouterContent(upstream.body) ||
+      "OpenClaw direct OpenRouter adapter is online.";
+    const usage = upstream.body.usage;
+
+    if (params.stream) {
+      setSseHeaders(params.res);
+      writeAssistantRoleChunk(params.res, { runId: params.runId, model: params.model });
+      writeAssistantContentChunk(params.res, {
+        runId: params.runId,
+        model: params.model,
+        content,
+        finishReason: null,
+      });
+      writeAssistantStopChunk(params.res, { runId: params.runId, model: params.model });
+      if (params.streamIncludeUsage && usage && typeof usage === "object") {
+        writeUsageChunk(params.res, {
+          runId: params.runId,
+          model: params.model,
+          usage: usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number },
+        });
+      }
+      writeDone(params.res);
+      params.res.end();
+      return true;
+    }
+
+    sendJson(params.res, 200, {
+      id: params.runId,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model: params.model,
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content },
+          finish_reason: "stop",
+        },
+      ],
+      usage,
+      agentnexus: {
+        adapter: "direct-openrouter",
+        upstreamModel: upstream.model,
+      },
+    });
+  } catch (err) {
+    if (params.signal.aborted) {
+      return true;
+    }
+    logWarn(`openai-compat: AgentNexus direct OpenRouter chat failed: ${String(err)}`);
+    sendJson(params.res, 502, {
+      error: { message: "upstream model request failed", type: "api_error" },
+    });
+  }
+
+  return true;
 }
 
 function asMessages(val: unknown): OpenAiChatMessage[] {
@@ -545,6 +777,21 @@ export async function handleOpenAiHttpRequest(
   const streamIncludeUsage = stream && resolveIncludeUsageForStreaming(payload);
   const model = typeof payload.model === "string" ? payload.model : "openclaw";
   const user = typeof payload.user === "string" ? payload.user : undefined;
+  const runId = `chatcmpl_${randomUUID()}`;
+  const abortController = new AbortController();
+
+  if (shouldUseAgentNexusDirectOpenRouterChat()) {
+    return await handleAgentNexusDirectOpenRouterChat({
+      payload,
+      res,
+      runId,
+      model,
+      modelOverride: readStringHeader(req, "x-openclaw-model"),
+      stream,
+      streamIncludeUsage,
+      signal: abortController.signal,
+    });
+  }
 
   const { agentId, sessionKey, messageChannel } = resolveGatewayRequestContext({
     req,
@@ -591,9 +838,7 @@ export async function handleOpenAiHttpRequest(
     return true;
   }
 
-  const runId = `chatcmpl_${randomUUID()}`;
   const deps = createDefaultDeps();
-  const abortController = new AbortController();
   const commandInput = buildAgentCommandInput({
     prompt: {
       message: prompt.message,
