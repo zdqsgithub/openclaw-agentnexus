@@ -14,6 +14,7 @@ explicit adapter layer for AgentNexus single-tenant cloud deployment.
 - Default model: `moonshotai/kimi-k2.6`
 - Fallback model: `moonshotai/kimi-k2.5`
 - Required secret: `OPENROUTER_API_KEY`
+- Required gateway auth secret: `OPENCLAW_GATEWAY_TOKEN`
 - Runtime port: `18789`
 
 ## Deployment Profiles

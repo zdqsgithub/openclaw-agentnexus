@@ -15,6 +15,35 @@ const TOKEN_AUTH = {
 };
 
 describe("resolveGatewayRuntimeConfig", () => {
+  describe("AgentNexus cloud profile", () => {
+    const previousDirectChat = process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+
+    afterEach(() => {
+      if (previousDirectChat === undefined) {
+        delete process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+      } else {
+        process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = previousDirectChat;
+      }
+    });
+
+    it("enables OpenAI-compatible chat routes when direct OpenRouter chat is enabled", async () => {
+      process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = "1";
+
+      const result = await resolveGatewayRuntimeConfig({
+        cfg: {
+          gateway: {
+            bind: "loopback",
+            auth: { mode: "none" },
+          },
+        },
+        port: 18789,
+      });
+
+      expect(result.openAiChatCompletionsEnabled).toBe(true);
+      expect(result.openAiChatCompletionsConfig).toMatchObject({ enabled: true });
+    });
+  });
+
   describe("trusted-proxy auth mode", () => {
     // This test validates BOTH validation layers:
     // 1. CLI validation in src/cli/gateway-cli/run.ts (line 246)

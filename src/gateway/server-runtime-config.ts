@@ -83,8 +83,11 @@ export async function resolveGatewayRuntimeConfig(params: {
   const controlUiEnabled =
     params.controlUiEnabled ?? params.cfg.gateway?.controlUi?.enabled ?? true;
   const openAiChatCompletionsConfig = params.cfg.gateway?.http?.endpoints?.chatCompletions;
+  const agentNexusDirectOpenRouterChatEnabled =
+    process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT === "1";
   const openAiChatCompletionsEnabled =
-    params.openAiChatCompletionsEnabled ?? openAiChatCompletionsConfig?.enabled ?? false;
+    params.openAiChatCompletionsEnabled ??
+    (agentNexusDirectOpenRouterChatEnabled || openAiChatCompletionsConfig?.enabled === true);
   const openResponsesConfig = params.cfg.gateway?.http?.endpoints?.responses;
   const openResponsesEnabled = params.openResponsesEnabled ?? openResponsesConfig?.enabled ?? false;
   const strictTransportSecurityConfig =
@@ -166,9 +169,10 @@ export async function resolveGatewayRuntimeConfig(params: {
     bindHost,
     controlUiEnabled,
     openAiChatCompletionsEnabled,
-    openAiChatCompletionsConfig: openAiChatCompletionsConfig
-      ? { ...openAiChatCompletionsConfig, enabled: openAiChatCompletionsEnabled }
-      : undefined,
+    openAiChatCompletionsConfig:
+      openAiChatCompletionsConfig || agentNexusDirectOpenRouterChatEnabled
+        ? { ...(openAiChatCompletionsConfig ?? {}), enabled: openAiChatCompletionsEnabled }
+        : undefined,
     openResponsesEnabled,
     openResponsesConfig: openResponsesConfig
       ? { ...openResponsesConfig, enabled: openResponsesEnabled }

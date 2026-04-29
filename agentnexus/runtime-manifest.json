@@ -14,7 +14,8 @@
     "provider": "openrouter"
   },
   "requiredSecrets": [
-    "OPENROUTER_API_KEY"
+    "OPENROUTER_API_KEY",
+    "OPENCLAW_GATEWAY_TOKEN"
   ],
   "defaultEnv": {
     "AGENTNEXUS_RUNTIME_PROFILE": "openclaw-agentnexus",
