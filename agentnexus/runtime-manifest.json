@@ -1,0 +1,36 @@
+{
+  "id": "openclaw-agentnexus",
+  "runtime": "clawbot",
+  "displayName": "AgentNexus OpenClaw Runtime",
+  "version": 1,
+  "dockerfile": "Dockerfile.agentnexus",
+  "port": 18789,
+  "healthPath": "/healthz",
+  "modelsPath": "/v1/models",
+  "chatPath": "/v1/chat/completions",
+  "model": {
+    "default": "moonshotai/kimi-k2.6",
+    "fallback": "moonshotai/kimi-k2.5",
+    "provider": "openrouter"
+  },
+  "requiredSecrets": [
+    "OPENROUTER_API_KEY"
+  ],
+  "defaultEnv": {
+    "AGENTNEXUS_RUNTIME_PROFILE": "openclaw-agentnexus",
+    "AGENTNEXUS_DIRECT_OPENROUTER_CHAT": "1",
+    "OPENCLAW_DISABLE_DNS_PINNING": "1",
+    "OPENCLAW_GATEWAY_STARTUP_TRACE": "1",
+    "PORT": "18789"
+  },
+  "providers": {
+    "railway": {
+      "configFile": "railway.json",
+      "dockerfilePathVariable": "RAILWAY_DOCKERFILE_PATH",
+      "dockerfilePath": "Dockerfile.agentnexus"
+    },
+    "fly": {
+      "preferredArtifact": "prebuilt-image"
+    }
+  }
+}
