@@ -427,6 +427,20 @@ describe("gateway hot reload", () => {
     );
   }
 
+  it("does not start the config reloader for managed headless gateways", async () => {
+    await withEnvAsync(
+      {
+        OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
+        OPENCLAW_MANAGED_HEADLESS: "1",
+      },
+      async () => {
+        await withGatewayServer(async () => {
+          expect(hoisted.startGatewayConfigReloader).not.toHaveBeenCalled();
+        });
+      },
+    );
+  });
+
   it("defers channel hot reload until active work drains", async () => {
     await withNonMinimalGatewayServer(async () => {
       const onHotReload = hoisted.getOnHotReload();
