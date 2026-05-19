@@ -131,6 +131,49 @@ describe("server-runtime-services", () => {
     services.heartbeatRunner.stop();
     expect(hoisted.heartbeatRunner.stop).not.toHaveBeenCalled();
   });
+
+  it("keeps managed headless gateways from starting background monitors and scheduled work", async () => {
+    vi.useFakeTimers();
+    const cron = { start: vi.fn(async () => undefined) };
+    const log = createLog();
+
+    const runtimeServices = startGatewayRuntimeServices({
+      minimalTestGateway: false,
+      backgroundServicesDisabled: true,
+      cfgAtStart: {} as never,
+      channelManager: {
+        getRuntimeSnapshot: vi.fn(),
+        isHealthMonitorEnabled: vi.fn(),
+        isManuallyStopped: vi.fn(),
+      } as never,
+      log,
+    });
+
+    const scheduledServices = activateGatewayScheduledServices({
+      minimalTestGateway: false,
+      backgroundServicesDisabled: true,
+      cfgAtStart: {} as never,
+      deps: {} as never,
+      sessionDeliveryRecoveryMaxEnqueuedAt: 123,
+      cron,
+      logCron: { error: vi.fn() },
+      log,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_250);
+    await vi.dynamicImportSettled();
+    expect(runtimeServices.channelHealthMonitor).toBeNull();
+    expect(hoisted.startChannelHealthMonitor).not.toHaveBeenCalled();
+    expect(hoisted.startGatewayModelPricingRefresh).not.toHaveBeenCalled();
+    expect(hoisted.startHeartbeatRunner).not.toHaveBeenCalled();
+    expect(cron.start).not.toHaveBeenCalled();
+    expect(hoisted.recoverPendingDeliveries).not.toHaveBeenCalled();
+    expect(hoisted.recoverPendingRestartContinuationDeliveries).not.toHaveBeenCalled();
+
+    runtimeServices.heartbeatRunner.stop();
+    scheduledServices.heartbeatRunner.stop();
+    expect(hoisted.heartbeatRunner.stop).not.toHaveBeenCalled();
+  });
 });
 
 function createLog() {

@@ -246,9 +246,15 @@ export async function startGatewayServer(
 ): Promise<GatewayServer> {
   const minimalTestGateway =
     isVitestRuntimeEnv() && process.env.OPENCLAW_TEST_MINIMAL_GATEWAY === "1";
+  const managedHeadlessGateway = isTruthyEnvValue(process.env.OPENCLAW_MANAGED_HEADLESS);
+  const backgroundServicesDisabled = minimalTestGateway || managedHeadlessGateway;
 
   // Ensure all default port derivations (browser/canvas) see the actual runtime port.
   process.env.OPENCLAW_GATEWAY_PORT = String(port);
+  logAcceptedEnvOption({
+    key: "OPENCLAW_MANAGED_HEADLESS",
+    description: "managed headless gateway background services disabled",
+  });
   logAcceptedEnvOption({
     key: "OPENCLAW_RAW_STREAM",
     description: "raw stream logging enabled",
@@ -464,7 +470,7 @@ export async function startGatewayServer(
     throw new Error(gatewayTls.error ?? "gateway tls: failed to enable");
   }
   const serverStartedAt = Date.now();
-  let startupSidecarsReady = minimalTestGateway;
+  let startupSidecarsReady = backgroundServicesDisabled;
   const channelManager = createChannelManager({
     loadConfig: () =>
       applyPluginAutoEnable({
@@ -621,6 +627,7 @@ export async function startGatewayServer(
     const earlyRuntime = await startupTrace.measure("runtime.early", () =>
       startGatewayEarlyRuntime({
         minimalTestGateway,
+        backgroundServicesDisabled,
         cfgAtStart,
         port,
         gatewayTls,
@@ -685,6 +692,7 @@ export async function startGatewayServer(
       runtimeState,
       startGatewayRuntimeServices({
         minimalTestGateway,
+        backgroundServicesDisabled,
         cfgAtStart,
         channelManager,
         log,
@@ -705,7 +713,7 @@ export async function startGatewayServer(
     const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
 
     const unavailableGatewayMethods = new Set<string>(
-      minimalTestGateway ? [] : STARTUP_UNAVAILABLE_GATEWAY_METHODS,
+      backgroundServicesDisabled ? [] : STARTUP_UNAVAILABLE_GATEWAY_METHODS,
     );
     const gatewayRequestContext = createGatewayRequestContext({
       deps,
@@ -819,6 +827,7 @@ export async function startGatewayServer(
     } = await startupTrace.measure("runtime.post-attach", () =>
       startGatewayPostAttachRuntime({
         minimalTestGateway,
+        backgroundServicesDisabled,
         cfgAtStart,
         bindHost,
         bindHosts: httpBindHosts,
@@ -854,6 +863,7 @@ export async function startGatewayServer(
 
     const activated = activateGatewayScheduledServices({
       minimalTestGateway,
+      backgroundServicesDisabled,
       cfgAtStart,
       deps,
       sessionDeliveryRecoveryMaxEnqueuedAt,

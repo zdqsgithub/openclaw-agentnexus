@@ -90,6 +90,7 @@ function recoverPendingSessionDeliveries(params: {
 
 export function startGatewayRuntimeServices(params: {
   minimalTestGateway: boolean;
+  backgroundServicesDisabled?: boolean;
   cfgAtStart: OpenClawConfig;
   channelManager: GatewayChannelManager;
   log: GatewayRuntimeServiceLogger;
@@ -98,16 +99,20 @@ export function startGatewayRuntimeServices(params: {
   channelHealthMonitor: ChannelHealthMonitor | null;
   stopModelPricingRefresh: () => void;
 } {
-  const channelHealthMonitor = startGatewayChannelHealthMonitor({
-    cfg: params.cfgAtStart,
-    channelManager: params.channelManager,
-  });
+  const skipBackgroundServices =
+    params.minimalTestGateway || params.backgroundServicesDisabled === true;
+  const channelHealthMonitor = skipBackgroundServices
+    ? null
+    : startGatewayChannelHealthMonitor({
+        cfg: params.cfgAtStart,
+        channelManager: params.channelManager,
+      });
 
   return {
     heartbeatRunner: createNoopHeartbeatRunner(),
     channelHealthMonitor,
     stopModelPricingRefresh:
-      !params.minimalTestGateway && !isVitestRuntimeEnv()
+      !skipBackgroundServices && !isVitestRuntimeEnv()
         ? startGatewayModelPricingRefresh({ config: params.cfgAtStart })
         : () => {},
   };
@@ -115,6 +120,7 @@ export function startGatewayRuntimeServices(params: {
 
 export function activateGatewayScheduledServices(params: {
   minimalTestGateway: boolean;
+  backgroundServicesDisabled?: boolean;
   cfgAtStart: OpenClawConfig;
   deps: import("../cli/deps.types.js").CliDeps;
   sessionDeliveryRecoveryMaxEnqueuedAt: number;
@@ -122,7 +128,7 @@ export function activateGatewayScheduledServices(params: {
   logCron: { error: (message: string) => void };
   log: GatewayRuntimeServiceLogger;
 }): { heartbeatRunner: HeartbeatRunner } {
-  if (params.minimalTestGateway) {
+  if (params.minimalTestGateway || params.backgroundServicesDisabled === true) {
     return { heartbeatRunner: createNoopHeartbeatRunner() };
   }
   const heartbeatRunner = startHeartbeatRunner({ cfg: params.cfgAtStart });

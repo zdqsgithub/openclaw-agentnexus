@@ -171,7 +171,7 @@ export async function resolveGatewayRuntimeConfig(params: {
     openAiChatCompletionsEnabled,
     openAiChatCompletionsConfig:
       openAiChatCompletionsConfig || agentNexusDirectOpenRouterChatEnabled
-        ? { ...(openAiChatCompletionsConfig ?? {}), enabled: openAiChatCompletionsEnabled }
+        ? { ...openAiChatCompletionsConfig, enabled: openAiChatCompletionsEnabled }
         : undefined,
     openResponsesEnabled,
     openResponsesConfig: openResponsesConfig
