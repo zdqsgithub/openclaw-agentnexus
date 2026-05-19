@@ -873,45 +873,47 @@ export async function startGatewayServer(
     });
     runtimeState.heartbeatRunner = activated.heartbeatRunner;
 
-    runtimeState.configReloader = startManagedGatewayConfigReloader({
-      minimalTestGateway,
-      initialConfig: cfgAtStart,
-      initialCompareConfig: startupLastGoodSnapshot.sourceConfig,
-      initialInternalWriteHash: startupInternalWriteHash,
-      watchPath: configSnapshot.path,
-      readSnapshot: readConfigFileSnapshot,
-      recoverSnapshot: recoverConfigFromLastKnownGood,
-      promoteSnapshot: promoteConfigSnapshotToLastKnownGood,
-      subscribeToWrites: registerConfigWriteListener,
-      deps,
-      broadcast,
-      getState: () => ({
-        hooksConfig: runtimeState.hooksConfig,
-        hookClientIpConfig: runtimeState.hookClientIpConfig,
-        heartbeatRunner: runtimeState.heartbeatRunner,
-        cronState: runtimeState.cronState,
-        channelHealthMonitor: runtimeState.channelHealthMonitor,
-      }),
-      setState: (nextState) => {
-        runtimeState.hooksConfig = nextState.hooksConfig;
-        runtimeState.hookClientIpConfig = nextState.hookClientIpConfig;
-        runtimeState.heartbeatRunner = nextState.heartbeatRunner;
-        runtimeState.cronState = nextState.cronState;
-        deps.cron = runtimeState.cronState.cron;
-        runtimeState.channelHealthMonitor = nextState.channelHealthMonitor;
-      },
-      startChannel,
-      stopChannel,
-      logHooks,
-      logChannels,
-      logCron,
-      logReload,
-      channelManager,
-      activateRuntimeSecrets,
-      resolveSharedGatewaySessionGenerationForConfig,
-      sharedGatewaySessionGenerationState,
-      clients,
-    });
+    if (!managedHeadlessGateway) {
+      runtimeState.configReloader = startManagedGatewayConfigReloader({
+        minimalTestGateway,
+        initialConfig: cfgAtStart,
+        initialCompareConfig: startupLastGoodSnapshot.sourceConfig,
+        initialInternalWriteHash: startupInternalWriteHash,
+        watchPath: configSnapshot.path,
+        readSnapshot: readConfigFileSnapshot,
+        recoverSnapshot: recoverConfigFromLastKnownGood,
+        promoteSnapshot: promoteConfigSnapshotToLastKnownGood,
+        subscribeToWrites: registerConfigWriteListener,
+        deps,
+        broadcast,
+        getState: () => ({
+          hooksConfig: runtimeState.hooksConfig,
+          hookClientIpConfig: runtimeState.hookClientIpConfig,
+          heartbeatRunner: runtimeState.heartbeatRunner,
+          cronState: runtimeState.cronState,
+          channelHealthMonitor: runtimeState.channelHealthMonitor,
+        }),
+        setState: (nextState) => {
+          runtimeState.hooksConfig = nextState.hooksConfig;
+          runtimeState.hookClientIpConfig = nextState.hookClientIpConfig;
+          runtimeState.heartbeatRunner = nextState.heartbeatRunner;
+          runtimeState.cronState = nextState.cronState;
+          deps.cron = runtimeState.cronState.cron;
+          runtimeState.channelHealthMonitor = nextState.channelHealthMonitor;
+        },
+        startChannel,
+        stopChannel,
+        logHooks,
+        logChannels,
+        logCron,
+        logReload,
+        channelManager,
+        activateRuntimeSecrets,
+        resolveSharedGatewaySessionGenerationForConfig,
+        sharedGatewaySessionGenerationState,
+        clients,
+      });
+    }
     await promoteConfigSnapshotToLastKnownGood(startupLastGoodSnapshot).catch((err) => {
       log.warn(`gateway: failed to promote config last-known-good backup: ${String(err)}`);
     });
