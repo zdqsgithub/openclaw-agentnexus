@@ -398,6 +398,7 @@ const defaultGatewayPostAttachRuntimeDeps: GatewayPostAttachRuntimeDeps = {
 export async function startGatewayPostAttachRuntime(
   params: {
     minimalTestGateway: boolean;
+    backgroundServicesDisabled?: boolean;
     cfgAtStart: OpenClawConfig;
     bindHost: string;
     bindHosts: string[];
@@ -438,6 +439,8 @@ export async function startGatewayPostAttachRuntime(
   },
   runtimeDeps: GatewayPostAttachRuntimeDeps = defaultGatewayPostAttachRuntimeDeps,
 ) {
+  const skipBackgroundServices =
+    params.minimalTestGateway || params.backgroundServicesDisabled === true;
   await measureStartup(params.startupTrace, "post-attach.log", () =>
     runtimeDeps.logGatewayStartup({
       cfg: params.cfgAtStart,
@@ -454,7 +457,7 @@ export async function startGatewayPostAttachRuntime(
     }),
   );
 
-  const stopGatewayUpdateCheckPromise = params.minimalTestGateway
+  const stopGatewayUpdateCheckPromise = skipBackgroundServices
     ? Promise.resolve(() => {})
     : measureStartup(params.startupTrace, "post-attach.update-check", () =>
         runtimeDeps.scheduleGatewayUpdateCheck({
@@ -468,7 +471,7 @@ export async function startGatewayPostAttachRuntime(
         }),
       );
 
-  const tailscaleCleanupPromise = params.minimalTestGateway
+  const tailscaleCleanupPromise = skipBackgroundServices
     ? Promise.resolve(null)
     : params.tailscaleMode === "off" && !params.resetOnExit
       ? Promise.resolve(null)
@@ -482,8 +485,18 @@ export async function startGatewayPostAttachRuntime(
           }),
         );
 
-  const sidecarsPromise = params.minimalTestGateway
-    ? Promise.resolve({ pluginServices: null })
+  const markSidecarsReady = (result: { pluginServices: PluginServicesHandle | null }) => {
+    for (const method of STARTUP_UNAVAILABLE_GATEWAY_METHODS) {
+      params.unavailableGatewayMethods.delete(method);
+    }
+    params.onPluginServices?.(result.pluginServices);
+    params.onSidecarsReady?.();
+    params.startupTrace?.mark("sidecars.ready");
+    return result;
+  };
+
+  const sidecarsPromise = skipBackgroundServices
+    ? Promise.resolve(markSidecarsReady({ pluginServices: null }))
     : new Promise<void>((resolve) => setImmediate(resolve)).then(async () => {
         params.log.info("starting channels and sidecars...");
         const result = await measureStartup(params.startupTrace, "sidecars.total", () =>
@@ -499,18 +512,12 @@ export async function startGatewayPostAttachRuntime(
             startupTrace: params.startupTrace,
           }),
         );
-        for (const method of STARTUP_UNAVAILABLE_GATEWAY_METHODS) {
-          params.unavailableGatewayMethods.delete(method);
-        }
-        params.onPluginServices?.(result.pluginServices);
-        params.onSidecarsReady?.();
-        params.startupTrace?.mark("sidecars.ready");
-        return result;
+        return markSidecarsReady(result);
       });
 
   void sidecarsPromise
     .then(async () => {
-      if (params.minimalTestGateway) {
+      if (skipBackgroundServices) {
         return;
       }
       const hookRunner = await runtimeDeps.getGlobalHookRunner();

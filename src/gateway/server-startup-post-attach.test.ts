@@ -248,6 +248,40 @@ describe("startGatewayPostAttachRuntime", () => {
     expect(startGatewaySidecars).toHaveBeenCalledTimes(1);
   });
 
+  it("marks managed headless gateways ready without starting post-attach sidecars", async () => {
+    const unavailableGatewayMethods = new Set<string>(STARTUP_UNAVAILABLE_GATEWAY_METHODS);
+    const onSidecarsReady = vi.fn();
+    const onPluginServices = vi.fn();
+    const startGatewaySidecars = vi.fn(async () => ({ pluginServices: null }));
+    const hookRunner = {
+      hasHooks: vi.fn(() => true),
+      runGatewayStart: vi.fn(async () => undefined),
+    };
+
+    await startGatewayPostAttachRuntime(
+      {
+        ...createPostAttachParams(),
+        backgroundServicesDisabled: true,
+        unavailableGatewayMethods,
+        onPluginServices,
+        onSidecarsReady,
+      },
+      createPostAttachRuntimeDeps({
+        getGlobalHookRunner: vi.fn(async () => hookRunner as never),
+        startGatewaySidecars,
+      }),
+    );
+
+    await vi.dynamicImportSettled();
+    expect([...unavailableGatewayMethods]).toEqual([]);
+    expect(onSidecarsReady).toHaveBeenCalledTimes(1);
+    expect(onPluginServices).toHaveBeenCalledWith(null);
+    expect(startGatewaySidecars).not.toHaveBeenCalled();
+    expect(hoisted.scheduleGatewayUpdateCheck).not.toHaveBeenCalled();
+    expect(hoisted.startGatewayTailscaleExposure).not.toHaveBeenCalled();
+    expect(hookRunner.runGatewayStart).not.toHaveBeenCalled();
+  });
+
   it("dispatches registered gateway startup internal hooks without configured hook packs", async () => {
     vi.useFakeTimers();
     hoisted.hasInternalHookListeners.mockReturnValue(true);

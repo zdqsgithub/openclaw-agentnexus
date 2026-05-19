@@ -14,6 +14,7 @@ import { startGatewayMaintenanceTimers } from "./server-maintenance.js";
 
 export async function startGatewayEarlyRuntime(params: {
   minimalTestGateway: boolean;
+  backgroundServicesDisabled?: boolean;
   cfgAtStart: OpenClawConfig;
   port: number;
   gatewayTls: { enabled: boolean; fingerprintSha256?: string };
@@ -55,8 +56,10 @@ export async function startGatewayEarlyRuntime(params: {
   setSkillsRefreshTimer: (timer: ReturnType<typeof setTimeout> | null) => void;
   loadConfig: () => OpenClawConfig;
 }) {
+  const skipBackgroundServices =
+    params.minimalTestGateway || params.backgroundServicesDisabled === true;
   let bonjourStop: (() => Promise<void>) | null = null;
-  if (!params.minimalTestGateway) {
+  if (!skipBackgroundServices) {
     const machineDisplayName = await getMachineDisplayName();
     const discovery = await startGatewayDiscovery({
       machineDisplayName,
@@ -74,13 +77,13 @@ export async function startGatewayEarlyRuntime(params: {
     bonjourStop = discovery.bonjourStop;
   }
 
-  if (!params.minimalTestGateway) {
+  if (!skipBackgroundServices) {
     setSkillsRemoteRegistry(params.nodeRegistry);
     void primeRemoteSkillsCache();
     startTaskRegistryMaintenance();
   }
 
-  const skillsChangeUnsub = params.minimalTestGateway
+  const skillsChangeUnsub = skipBackgroundServices
     ? () => {}
     : registerSkillsChangeListener((event) => {
         if (event.reason === "remote-node") {
@@ -97,7 +100,7 @@ export async function startGatewayEarlyRuntime(params: {
         params.setSkillsRefreshTimer(nextTimer);
       });
 
-  const maintenance = params.minimalTestGateway
+  const maintenance = skipBackgroundServices
     ? null
     : startGatewayMaintenanceTimers({
         broadcast: params.broadcast,
