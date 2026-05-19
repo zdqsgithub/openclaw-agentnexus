@@ -34,6 +34,24 @@ describe("gateway OpenAI-compatible disabled HTTP routes", () => {
 });
 
 describe("gateway probe endpoints", () => {
+  it("answers shallow /healthz before potentially blocking request stages", async () => {
+    await withGatewayServer({
+      prefix: "probe-healthz-short-circuit",
+      resolvedAuth: AUTH_NONE,
+      overrides: {
+        handleHooksRequest: async () => new Promise<boolean>(() => {}),
+      },
+      run: async (server) => {
+        const req = createRequest({ path: "/healthz" });
+        const { res, getBody } = createResponse();
+        await dispatchRequest(server, req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(getBody()).toBe(JSON.stringify({ ok: true, status: "live" }));
+      },
+    });
+  });
+
   it("returns detailed readiness payload for local /ready requests", async () => {
     const getReadiness: ReadinessChecker = () => ({
       ready: true,

@@ -270,6 +270,10 @@ function isA2uiPath(pathname: string): boolean {
   return pathname === A2UI_PATH || pathname.startsWith(`${A2UI_PATH}/`);
 }
 
+function isManagedOutgoingImagePath(pathname: string): boolean {
+  return pathname.startsWith("/api/chat/media/outgoing/");
+}
+
 function shouldEnforceDefaultPluginGatewayAuth(pathContext: PluginRoutePathContext): boolean {
   return (
     pathContext.malformedEncoding ||
@@ -944,6 +948,19 @@ export function createGatewayHttpServer(opts: {
         ? resolvePluginRoutePathContext(requestPath)
         : null;
       const resolvedAuth = getResolvedAuth();
+      if (
+        await handleGatewayProbeRequest(
+          req,
+          res,
+          requestPath,
+          resolvedAuth,
+          trustedProxies,
+          allowRealIpFallback,
+          getReadiness,
+        )
+      ) {
+        return;
+      }
       const requestStages: GatewayHttpRequestStage[] = [
         {
           name: "hooks",
@@ -1089,20 +1106,22 @@ export function createGatewayHttpServer(opts: {
         }),
       );
 
-      requestStages.push({
-        name: "chat-managed-image-media",
-        run: async () =>
-          (await getManagedImageAttachmentsModule()).handleManagedOutgoingImageHttpRequest(
-            req,
-            res,
-            {
-              auth: resolvedAuth,
-              trustedProxies,
-              allowRealIpFallback,
-              rateLimiter,
-            },
-          ),
-      });
+      if (isManagedOutgoingImagePath(requestPath)) {
+        requestStages.push({
+          name: "chat-managed-image-media",
+          run: async () =>
+            (await getManagedImageAttachmentsModule()).handleManagedOutgoingImageHttpRequest(
+              req,
+              res,
+              {
+                auth: resolvedAuth,
+                trustedProxies,
+                allowRealIpFallback,
+                rateLimiter,
+              },
+            ),
+        });
+      }
 
       if (controlUiEnabled) {
         requestStages.push({
@@ -1149,20 +1168,6 @@ export function createGatewayHttpServer(opts: {
             }),
         });
       }
-
-      requestStages.push({
-        name: "gateway-probes",
-        run: () =>
-          handleGatewayProbeRequest(
-            req,
-            res,
-            requestPath,
-            resolvedAuth,
-            trustedProxies,
-            allowRealIpFallback,
-            getReadiness,
-          ),
-      });
 
       if (await runGatewayHttpRequestStages(requestStages)) {
         return;
