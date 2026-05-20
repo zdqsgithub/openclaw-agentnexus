@@ -25,8 +25,11 @@ export async function prepareGatewayPluginBootstrap(params: {
   cfgAtStart: OpenClawConfig;
   startupRuntimeConfig: OpenClawConfig;
   minimalTestGateway: boolean;
+  backgroundServicesDisabled?: boolean;
   log: GatewayPluginBootstrapLog;
 }) {
+  const pluginBootstrapDisabled =
+    params.minimalTestGateway || params.backgroundServicesDisabled === true;
   const startupMaintenanceConfig =
     params.cfgAtStart.channels === undefined && params.startupRuntimeConfig.channels !== undefined
       ? {
@@ -36,7 +39,8 @@ export async function prepareGatewayPluginBootstrap(params: {
       : params.cfgAtStart;
 
   const shouldRunStartupMaintenance =
-    !params.minimalTestGateway || startupMaintenanceConfig.channels !== undefined;
+    !pluginBootstrapDisabled &&
+    (!params.minimalTestGateway || startupMaintenanceConfig.channels !== undefined);
   if (shouldRunStartupMaintenance) {
     const startupTasks = [
       runChannelPluginStartupMaintenance({
@@ -59,7 +63,7 @@ export async function prepareGatewayPluginBootstrap(params: {
 
   initSubagentRegistry();
 
-  const gatewayPluginConfigAtStart = params.minimalTestGateway
+  const gatewayPluginConfigAtStart = pluginBootstrapDisabled
     ? params.cfgAtStart
     : applyPluginAutoEnable({
         config: params.cfgAtStart,
@@ -67,14 +71,14 @@ export async function prepareGatewayPluginBootstrap(params: {
       }).config;
   const defaultAgentId = resolveDefaultAgentId(gatewayPluginConfigAtStart);
   const defaultWorkspaceDir = resolveAgentWorkspaceDir(gatewayPluginConfigAtStart, defaultAgentId);
-  const deferredConfiguredChannelPluginIds = params.minimalTestGateway
+  const deferredConfiguredChannelPluginIds = pluginBootstrapDisabled
     ? []
     : resolveConfiguredDeferredChannelPluginIds({
         config: gatewayPluginConfigAtStart,
         workspaceDir: defaultWorkspaceDir,
         env: process.env,
       });
-  const startupPluginIds = params.minimalTestGateway
+  const startupPluginIds = pluginBootstrapDisabled
     ? []
     : resolveGatewayStartupPluginIds({
         config: gatewayPluginConfigAtStart,
@@ -88,7 +92,7 @@ export async function prepareGatewayPluginBootstrap(params: {
   let pluginRegistry = emptyPluginRegistry;
   let baseGatewayMethods = baseMethods;
 
-  if (!params.minimalTestGateway) {
+  if (!pluginBootstrapDisabled) {
     ({ pluginRegistry, gatewayMethods: baseGatewayMethods } = loadGatewayStartupPlugins({
       cfg: gatewayPluginConfigAtStart,
       activationSourceConfig: params.cfgAtStart,
@@ -100,9 +104,11 @@ export async function prepareGatewayPluginBootstrap(params: {
       preferSetupRuntimeForChannelPlugins: deferredConfiguredChannelPluginIds.length > 0,
       suppressPluginInfoLogs: deferredConfiguredChannelPluginIds.length > 0,
     }));
-  } else {
+  } else if (params.minimalTestGateway) {
     pluginRegistry = getActivePluginRegistry() ?? emptyPluginRegistry;
     setActivePluginRegistry(pluginRegistry);
+  } else {
+    setActivePluginRegistry(pluginRegistry, undefined, "gateway-bindable", defaultWorkspaceDir);
   }
 
   return {
