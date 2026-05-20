@@ -54,7 +54,7 @@ import { applyGatewayLaneConcurrency } from "./server-lanes.js";
 import { createGatewayServerLiveState, type GatewayServerLiveState } from "./server-live-state.js";
 import { GATEWAY_EVENTS } from "./server-methods-list.js";
 import { coreGatewayHandlers } from "./server-methods.js";
-import { loadGatewayModelCatalog } from "./server-model-catalog.js";
+import { resolveGatewayModelCatalogLoader } from "./server-model-catalog.js";
 import { createGatewayNodeSessionRuntime } from "./server-node-session-runtime.js";
 import { setFallbackGatewayContextResolver } from "./server-plugins.js";
 import { startManagedGatewayConfigReloader } from "./server-reload-handlers.js";
@@ -715,6 +715,11 @@ export async function startGatewayServer(
     const unavailableGatewayMethods = new Set<string>(
       backgroundServicesDisabled ? [] : STARTUP_UNAVAILABLE_GATEWAY_METHODS,
     );
+    const loadGatewayModelCatalog = resolveGatewayModelCatalogLoader({
+      managedHeadlessGateway,
+      getConfig: getRuntimeConfig,
+    });
+
     const gatewayRequestContext = createGatewayRequestContext({
       deps,
       runtimeState,
