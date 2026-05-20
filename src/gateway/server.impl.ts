@@ -356,6 +356,7 @@ export async function startGatewayServer(
       cfgAtStart,
       startupRuntimeConfig,
       minimalTestGateway,
+      backgroundServicesDisabled,
       log,
     }),
   );
@@ -472,11 +473,13 @@ export async function startGatewayServer(
   const serverStartedAt = Date.now();
   let startupSidecarsReady = backgroundServicesDisabled;
   const channelManager = createChannelManager({
-    loadConfig: () =>
-      applyPluginAutoEnable({
-        config: loadConfig(),
-        env: process.env,
-      }).config,
+    loadConfig: backgroundServicesDisabled
+      ? loadConfig
+      : () =>
+          applyPluginAutoEnable({
+            config: loadConfig(),
+            env: process.env,
+          }).config,
     channelLogs,
     channelRuntimeEnvs,
     resolveChannelRuntime: getChannelRuntime,
