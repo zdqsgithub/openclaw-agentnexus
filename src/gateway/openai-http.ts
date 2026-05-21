@@ -31,11 +31,7 @@ import {
 } from "../shared/string-coerce.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
-  buildChannelPublishBoundaryAnswer,
-  executeAgentNexusRuntimeTool,
-  formatAgentNexusRuntimeToolAnswer,
-  readAgentNexusRuntimeToolConfig,
-  resolveAgentNexusRuntimeToolRequest,
+  resolveAgentNexusRuntimeTextReply,
 } from "./agentnexus-tool-gateway.js";
 import {
   buildAgentMessageFromConversationEntries,
@@ -353,49 +349,22 @@ async function handleAgentNexusRuntimeToolGatewayChat(params: {
   signal: AbortSignal;
 }): Promise<boolean> {
   const userText = extractLastOpenAiUserMessageText(params.payload);
-  const channelBoundaryAnswer = buildChannelPublishBoundaryAnswer(userText);
-  if (channelBoundaryAnswer) {
-    sendAgentNexusRuntimeTextResponse({
-      res: params.res,
-      runId: params.runId,
-      model: params.model,
-      content: channelBoundaryAnswer,
-      stream: params.stream,
-      streamIncludeUsage: params.streamIncludeUsage,
-      adapter: "agentnexus-channel-boundary",
-    });
-    return true;
-  }
-
-  const request = resolveAgentNexusRuntimeToolRequest(userText);
-  if (!request) {
+  const reply = await resolveAgentNexusRuntimeTextReply({
+    text: userText,
+    signal: params.signal,
+  });
+  if (!reply) {
     return false;
   }
-
-  const config = readAgentNexusRuntimeToolConfig();
-  const content = config
-    ? formatAgentNexusRuntimeToolAnswer({
-        request,
-        result: await executeAgentNexusRuntimeTool({
-          config,
-          request,
-          signal: params.signal,
-        }),
-      })
-    : [
-        "AgentNexus Tool Gateway is not configured for this runtime.",
-        "",
-        "Use the AgentNexus Developer Sandbox for Google Workspace, cited search, and other server-side tool checks until this runtime is provisioned with Tool Gateway access.",
-      ].join("\n");
 
   sendAgentNexusRuntimeTextResponse({
     res: params.res,
     runId: params.runId,
     model: params.model,
-    content,
+    content: reply.content,
     stream: params.stream,
     streamIncludeUsage: params.streamIncludeUsage,
-    adapter: "agentnexus-tool-gateway",
+    adapter: reply.adapter,
   });
   return true;
 }

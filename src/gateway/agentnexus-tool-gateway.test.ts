@@ -4,6 +4,7 @@ import {
   executeAgentNexusRuntimeTool,
   formatAgentNexusRuntimeToolAnswer,
   readAgentNexusRuntimeToolConfig,
+  resolveAgentNexusRuntimeTextReply,
   resolveAgentNexusRuntimeToolRequest,
 } from "./agentnexus-tool-gateway.js";
 
@@ -147,5 +148,42 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
 
     expect(answer).toContain("https://www.fda.gov/medical-devices/software-medical-device-samd");
+  });
+
+  it("resolves runtime text replies through the same Tool Gateway path used by native chat", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          result: {
+            items: [
+              { summary: "Private event title", attendees: [{ email: "person@example.com" }] },
+              { summary: "Board review" },
+            ],
+          },
+        },
+      }),
+    })) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Can you access Google Calendar and list events?",
+      now: new Date("2026-05-21T17:00:00.000Z"),
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+    });
+
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("event_count: 2");
+    expect(reply?.content).toContain("source: authorized Google Calendar read");
+    expect(reply?.content).not.toContain("Private event title");
+    expect(reply?.content).not.toContain("person@example.com");
+    expect(reply?.content).not.toContain("Board review");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

@@ -17,6 +17,11 @@ export type AgentNexusRuntimeToolResult = {
   body: Record<string, unknown>;
 };
 
+export type AgentNexusRuntimeTextReply = {
+  adapter: "agentnexus-tool-gateway" | "agentnexus-channel-boundary";
+  content: string;
+};
+
 export function readAgentNexusRuntimeToolConfig(
   env: Record<string, string | undefined> = process.env,
 ): AgentNexusRuntimeToolConfig | null {
@@ -84,6 +89,52 @@ export function buildChannelPublishBoundaryAnswer(text: string): string | null {
     "",
     "I can help draft the message here, but actual channel setup and delivery evidence should stay in AgentNexus Tool Gateway.",
   ].join("\n");
+}
+
+export async function resolveAgentNexusRuntimeTextReply(options: {
+  text: string;
+  now?: Date;
+  env?: Record<string, string | undefined>;
+  fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<AgentNexusRuntimeTextReply | null> {
+  const channelBoundaryAnswer = buildChannelPublishBoundaryAnswer(options.text);
+  if (channelBoundaryAnswer) {
+    return {
+      adapter: "agentnexus-channel-boundary",
+      content: channelBoundaryAnswer,
+    };
+  }
+
+  const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
+  if (!request) {
+    return null;
+  }
+
+  const config = readAgentNexusRuntimeToolConfig(options.env);
+  if (!config) {
+    return {
+      adapter: "agentnexus-tool-gateway",
+      content: [
+        "AgentNexus Tool Gateway is not configured for this runtime.",
+        "",
+        "Use the AgentNexus Developer Sandbox for Google Workspace, cited search, and other server-side tool checks until this runtime is provisioned with Tool Gateway access.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    adapter: "agentnexus-tool-gateway",
+    content: formatAgentNexusRuntimeToolAnswer({
+      request,
+      result: await executeAgentNexusRuntimeTool({
+        config,
+        request,
+        fetchFn: options.fetchFn,
+        signal: options.signal,
+      }),
+    }),
+  };
 }
 
 export async function executeAgentNexusRuntimeTool(options: {

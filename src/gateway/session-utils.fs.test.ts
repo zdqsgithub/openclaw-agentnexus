@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { createToolSummaryPreviewTranscriptLines } from "./session-preview.test-helpers.js";
 import {
@@ -499,6 +500,52 @@ describe("readSessionMessages", () => {
     expect(marker.__openclaw?.kind).toBe("compaction");
     expect(marker.__openclaw?.id).toBe("comp-1");
     expect(typeof marker.timestamp).toBe("number");
+  });
+
+  test("returns only the active SessionManager branch after prompt transcript rewrite", () => {
+    const manager = SessionManager.create(tmpDir, tmpDir);
+    const sessionId = manager.getSessionId();
+    const transcriptPath = manager.getSessionFile();
+    expect(transcriptPath).toBeTruthy();
+
+    manager.appendMessage({
+      role: "user",
+      content: "Envelope(sender=openclaw-control-ui): Codex dedupe smoke.",
+      senderLabel: "openclaw-control-ui",
+      timestamp: 1,
+    } as never);
+    manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+      responseId: "resp-same",
+      timestamp: 2,
+    } as never);
+
+    manager.resetLeaf();
+    manager.appendMessage({
+      role: "user",
+      content: "Codex dedupe smoke.",
+      timestamp: 3,
+    } as never);
+    manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+      responseId: "resp-same",
+      timestamp: 4,
+    } as never);
+
+    const out = readSessionMessages(sessionId, storePath, transcriptPath);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      role: "user",
+      content: "Codex dedupe smoke.",
+    });
+    expect(out[1]).toMatchObject({
+      role: "assistant",
+      responseId: "resp-same",
+    });
+    expect(JSON.stringify(out)).not.toContain("openclaw-control-ui");
+    expect(JSON.stringify(out)).not.toContain("Envelope(sender=");
   });
 
   test.each([
