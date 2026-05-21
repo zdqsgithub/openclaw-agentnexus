@@ -684,6 +684,84 @@ describe("gateway server chat", () => {
     });
   });
 
+  test("routes generic managed-headless chat through direct runtime model without native agent dispatch", async () => {
+    await withMainSessionStore(async () => {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: "Hello from the managed OpenClaw runtime.",
+              },
+            },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      vi.stubEnv("OPENCLAW_MANAGED_HEADLESS", "1");
+      vi.stubEnv("OPENROUTER_API_KEY", "openrouter-key");
+      vi.stubEnv("OPENROUTER_MODEL", "moonshotai/kimi-k2.6");
+      vi.stubGlobal("fetch", fetchFn);
+      try {
+        const finalPromise = onceMessage(
+          ws,
+          (o) =>
+            o.type === "event" &&
+            o.event === "chat" &&
+            o.payload?.state === "final" &&
+            o.payload?.runId === "idem-agentnexus-direct-1",
+          CHAT_RESPONSE_TIMEOUT_MS,
+        );
+        const res = await rpcReq(ws, "chat.send", {
+          sessionKey: "main",
+          message: "Hi, introduce yourself",
+          idempotencyKey: "idem-agentnexus-direct-1",
+        });
+        expect(res.ok).toBe(true);
+        const finalEvent = await finalPromise;
+        const finalText = extractFirstTextBlock(finalEvent.payload?.message);
+        expect(finalText).toContain("managed OpenClaw runtime");
+        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
+  test("routes missing Tool Gateway token failures without native agent dispatch", async () => {
+    await withMainSessionStore(async () => {
+      vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
+      try {
+        const finalPromise = onceMessage(
+          ws,
+          (o) =>
+            o.type === "event" &&
+            o.event === "chat" &&
+            o.payload?.state === "final" &&
+            o.payload?.runId === "idem-agentnexus-missing-token-1",
+          CHAT_RESPONSE_TIMEOUT_MS,
+        );
+        const res = await rpcReq(ws, "chat.send", {
+          sessionKey: "main",
+          message: "Can you access Google Calendar and list events?",
+          idempotencyKey: "idem-agentnexus-missing-token-1",
+        });
+        expect(res.ok).toBe(true);
+        const finalEvent = await finalPromise;
+        const finalText = extractFirstTextBlock(finalEvent.payload?.message);
+        expect(finalText).toContain("AgentNexus Tool Gateway is not configured");
+        expect(finalText).toContain("Developer Sandbox");
+        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
+
   test("routes /btw replies through side-result events without transcript injection", async () => {
     await withMainSessionStore(async (dir) => {
       await fs.writeFile(

@@ -186,4 +186,74 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("Board review");
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
+
+  it("answers generic managed-headless runtime chat through the direct model path", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: "Hello from the managed OpenClaw runtime.",
+            },
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Hi, introduce yourself",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        OPENROUTER_MODEL: "moonshotai/kimi-k2.6",
+      },
+      fetchFn,
+    });
+
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-direct-openrouter",
+      content: "Hello from the managed OpenClaw runtime.",
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+        headers: expect.objectContaining({
+          authorization: "Bearer openrouter-key",
+          "content-type": "application/json",
+        }),
+      }),
+    );
+    const requestBody = JSON.parse(String(fetchFn.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "moonshotai/kimi-k2.6",
+      messages: [
+        expect.objectContaining({
+          role: "system",
+        }),
+        {
+          role: "user",
+          content: "Hi, introduce yourself",
+        },
+      ],
+    });
+  });
+
+  it("returns a bounded Tool Gateway setup answer when runtime token is missing", async () => {
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Can you access Google Calendar and list events?",
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+      },
+    });
+
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("AgentNexus Tool Gateway is not configured");
+    expect(reply?.content).toContain("Developer Sandbox");
+  });
 });

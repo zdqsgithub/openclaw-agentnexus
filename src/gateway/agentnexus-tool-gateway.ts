@@ -18,8 +18,14 @@ export type AgentNexusRuntimeToolResult = {
 };
 
 export type AgentNexusRuntimeTextReply = {
-  adapter: "agentnexus-tool-gateway" | "agentnexus-channel-boundary";
+  adapter: "agentnexus-tool-gateway" | "agentnexus-channel-boundary" | "agentnexus-direct-openrouter";
   content: string;
+};
+
+export type AgentNexusRuntimeDirectChatConfig = {
+  apiKey: string;
+  apiUrl: string;
+  model: string;
 };
 
 export function readAgentNexusRuntimeToolConfig(
@@ -31,6 +37,23 @@ export function readAgentNexusRuntimeToolConfig(
     return null;
   }
   return { gatewayUrl, runtimeToken };
+}
+
+export function readAgentNexusRuntimeDirectChatConfig(
+  env: Record<string, string | undefined> = process.env,
+): AgentNexusRuntimeDirectChatConfig | null {
+  if (!isTruthyEnvValue(env.OPENCLAW_MANAGED_HEADLESS)) {
+    return null;
+  }
+  const apiKey = env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    return null;
+  }
+  return {
+    apiKey,
+    apiUrl: env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions",
+    model: env.OPENROUTER_MODEL?.trim() || "moonshotai/kimi-k2.6",
+  };
 }
 
 export function resolveAgentNexusRuntimeToolRequest(
@@ -108,7 +131,19 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
 
   const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
   if (!request) {
-    return null;
+    const directConfig = readAgentNexusRuntimeDirectChatConfig(options.env);
+    if (!directConfig) {
+      return null;
+    }
+    return {
+      adapter: "agentnexus-direct-openrouter",
+      content: await executeAgentNexusRuntimeDirectChat({
+        config: directConfig,
+        text: options.text,
+        fetchFn: options.fetchFn,
+        signal: options.signal,
+      }),
+    };
   }
 
   const config = readAgentNexusRuntimeToolConfig(options.env);
@@ -144,25 +179,89 @@ export async function executeAgentNexusRuntimeTool(options: {
   signal?: AbortSignal;
 }): Promise<AgentNexusRuntimeToolResult> {
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(options.config.gatewayUrl, {
-    method: "POST",
-    redirect: "error",
-    signal: options.signal,
-    headers: {
-      authorization: `Bearer ${options.config.runtimeToken}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      tool: options.request.tool,
-      args: options.request.args,
-    }),
-  });
-  const body = await response.json().catch(() => ({}));
-  return {
-    ok: response.ok,
-    status: response.status,
-    body: body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {},
-  };
+  const boundedSignal = createBoundedSignal(options.signal, 45_000);
+  try {
+    const response = await fetchFn(options.config.gatewayUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: boundedSignal.signal,
+      headers: {
+        authorization: `Bearer ${options.config.runtimeToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        tool: options.request.tool,
+        args: options.request.args,
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    return {
+      ok: response.ok,
+      status: response.status,
+      body: body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {},
+    };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      body: {
+        code: "RUNTIME_TOOL_UNAVAILABLE",
+        error: "AgentNexus Tool Gateway did not complete before the runtime safety timeout.",
+      },
+    };
+  } finally {
+    boundedSignal.cleanup();
+  }
+}
+
+export async function executeAgentNexusRuntimeDirectChat(options: {
+  config: AgentNexusRuntimeDirectChatConfig;
+  text: string;
+  fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const boundedSignal = createBoundedSignal(options.signal, 45_000);
+  try {
+    const response = await fetchFn(options.config.apiUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: boundedSignal.signal,
+      headers: {
+        authorization: `Bearer ${options.config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: options.config.model,
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You are the managed OpenClaw runtime for AgentNexus.",
+              "Answer the user directly and concisely.",
+              "Do not claim direct access to Google Workspace, web search, Slack, Telegram, Discord, secrets, or runtime shell.",
+              "Those capabilities are mediated by AgentNexus Tool Gateway or the AgentNexus workspace approval surfaces.",
+            ].join(" "),
+          },
+          {
+            role: "user",
+            content: options.text.slice(0, 8_000),
+          },
+        ],
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return "The managed OpenClaw runtime model endpoint is unavailable. Use the AgentNexus workspace Developer Sandbox for demo-safe tool checks while runtime diagnostics are reviewed.";
+    }
+    const content = readOpenRouterContent(body);
+    return content ||
+      "The managed OpenClaw runtime did not return text. Use the AgentNexus workspace Developer Sandbox for this check.";
+  } catch {
+    return "The managed OpenClaw runtime did not complete before the safety timeout. Use the AgentNexus workspace Developer Sandbox for this check while runtime diagnostics are reviewed.";
+  } finally {
+    boundedSignal.cleanup();
+  }
 }
 
 export function formatAgentNexusRuntimeToolAnswer(params: {
@@ -240,4 +339,53 @@ function readToolResult(body: Record<string, unknown>) {
     return undefined;
   }
   return (data as { result?: unknown }).result;
+}
+
+function readOpenRouterContent(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const choices = (body as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) {
+    return null;
+  }
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
+      continue;
+    }
+    const message = (choice as { message?: unknown }).message;
+    if (message && typeof message === "object" && !Array.isArray(message)) {
+      const content = (message as { content?: unknown }).content;
+      if (typeof content === "string" && content.trim()) {
+        return content.trim();
+      }
+    }
+  }
+  return null;
+}
+
+function createBoundedSignal(parent: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("AgentNexus runtime request timed out"));
+  }, timeoutMs);
+  const abort = () => {
+    controller.abort(parent?.reason);
+  };
+  if (parent?.aborted) {
+    abort();
+  } else {
+    parent?.addEventListener("abort", abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", abort);
+    },
+  };
+}
+
+function isTruthyEnvValue(value: string | undefined) {
+  return /^(1|true|yes|on)$/i.test(value?.trim() ?? "");
 }
