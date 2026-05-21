@@ -31,6 +31,13 @@ import {
 } from "../shared/string-coerce.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
+  buildChannelPublishBoundaryAnswer,
+  executeAgentNexusRuntimeTool,
+  formatAgentNexusRuntimeToolAnswer,
+  readAgentNexusRuntimeToolConfig,
+  resolveAgentNexusRuntimeToolRequest,
+} from "./agentnexus-tool-gateway.js";
+import {
   buildAgentMessageFromConversationEntries,
   type ConversationEntry,
 } from "./agent-prompt.js";
@@ -277,6 +284,122 @@ function extractDirectOpenRouterContent(body: Record<string, unknown>): string {
   );
 }
 
+function extractLastOpenAiUserMessageText(payload: OpenAiChatCompletionRequest): string {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i] as OpenAiChatMessage | undefined;
+    if (!message || message.role !== "user") {
+      continue;
+    }
+    return stringifyOpenAiContent(message.content).trim();
+  }
+  return "";
+}
+
+function sendAgentNexusRuntimeTextResponse(params: {
+  res: ServerResponse;
+  runId: string;
+  model: string;
+  content: string;
+  stream: boolean;
+  streamIncludeUsage: boolean;
+  adapter: "agentnexus-tool-gateway" | "agentnexus-channel-boundary";
+}) {
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  if (params.stream) {
+    setSseHeaders(params.res);
+    writeAssistantRoleChunk(params.res, { runId: params.runId, model: params.model });
+    writeAssistantContentChunk(params.res, {
+      runId: params.runId,
+      model: params.model,
+      content: params.content,
+      finishReason: null,
+    });
+    writeAssistantStopChunk(params.res, { runId: params.runId, model: params.model });
+    if (params.streamIncludeUsage) {
+      writeUsageChunk(params.res, { runId: params.runId, model: params.model, usage });
+    }
+    writeDone(params.res);
+    params.res.end();
+    return;
+  }
+
+  sendJson(params.res, 200, {
+    id: params.runId,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: params.content },
+        finish_reason: "stop",
+      },
+    ],
+    usage,
+    agentnexus: {
+      adapter: params.adapter,
+    },
+  });
+}
+
+async function handleAgentNexusRuntimeToolGatewayChat(params: {
+  payload: OpenAiChatCompletionRequest;
+  res: ServerResponse;
+  runId: string;
+  model: string;
+  stream: boolean;
+  streamIncludeUsage: boolean;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const userText = extractLastOpenAiUserMessageText(params.payload);
+  const channelBoundaryAnswer = buildChannelPublishBoundaryAnswer(userText);
+  if (channelBoundaryAnswer) {
+    sendAgentNexusRuntimeTextResponse({
+      res: params.res,
+      runId: params.runId,
+      model: params.model,
+      content: channelBoundaryAnswer,
+      stream: params.stream,
+      streamIncludeUsage: params.streamIncludeUsage,
+      adapter: "agentnexus-channel-boundary",
+    });
+    return true;
+  }
+
+  const request = resolveAgentNexusRuntimeToolRequest(userText);
+  if (!request) {
+    return false;
+  }
+
+  const config = readAgentNexusRuntimeToolConfig();
+  const content = config
+    ? formatAgentNexusRuntimeToolAnswer({
+        request,
+        result: await executeAgentNexusRuntimeTool({
+          config,
+          request,
+          signal: params.signal,
+        }),
+      })
+    : [
+        "AgentNexus Tool Gateway is not configured for this runtime.",
+        "",
+        "Use the AgentNexus Developer Sandbox for Google Workspace, cited search, and other server-side tool checks until this runtime is provisioned with Tool Gateway access.",
+      ].join("\n");
+
+  sendAgentNexusRuntimeTextResponse({
+    res: params.res,
+    runId: params.runId,
+    model: params.model,
+    content,
+    stream: params.stream,
+    streamIncludeUsage: params.streamIncludeUsage,
+    adapter: "agentnexus-tool-gateway",
+  });
+  return true;
+}
+
 function postOpenRouterJson(params: {
   apiKey: string;
   payload: Record<string, unknown>;
@@ -374,6 +497,19 @@ async function handleAgentNexusDirectOpenRouterChat(params: {
   signal: AbortSignal;
 }): Promise<boolean> {
   try {
+    const handledByToolGateway = await handleAgentNexusRuntimeToolGatewayChat({
+      payload: params.payload,
+      res: params.res,
+      runId: params.runId,
+      model: params.model,
+      stream: params.stream,
+      streamIncludeUsage: params.streamIncludeUsage,
+      signal: params.signal,
+    });
+    if (handledByToolGateway) {
+      return true;
+    }
+
     const upstream = await requestDirectOpenRouterCompletion({
       payload: params.payload,
       modelOverride: params.modelOverride,
