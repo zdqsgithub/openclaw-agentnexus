@@ -1343,4 +1343,97 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       );
     },
   );
+
+  it("routes runtime Google Workspace requests through AgentNexus Tool Gateway before model fallback", async () => {
+    const port = enabledPort;
+    const previousDirectChat = process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+    const previousGatewayUrl = process.env.AGENTNEXUS_TOOL_GATEWAY_URL;
+    const previousRuntimeToken = process.env.AGENTNEXUS_RUNTIME_TOKEN;
+    const receivedRequests: Array<{ authorization?: string; body: unknown }> = [];
+    const toolGatewayServer = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => {
+        receivedRequests.push({
+          authorization: req.headers.authorization,
+          body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown,
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: {
+              result: {
+                items: [
+                  { summary: "Happy birthday!", attendees: [{ email: "person@example.com" }] },
+                  { summary: "Private FDA call", location: "redacted room" },
+                ],
+              },
+            },
+          }),
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => toolGatewayServer.listen(0, "127.0.0.1", resolve));
+    const address = toolGatewayServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Tool Gateway test server did not bind to a TCP port");
+    }
+
+    try {
+      process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = "1";
+      process.env.AGENTNEXUS_TOOL_GATEWAY_URL = `http://127.0.0.1:${address.port}/execute`;
+      process.env.AGENTNEXUS_RUNTIME_TOKEN = "runtime-token";
+      agentCommand.mockClear();
+
+      const res = await postChatCompletions(port, {
+        stream: false,
+        model: "openclaw",
+        messages: [
+          {
+            role: "user",
+            content:
+              "For a redacted demo readiness check, use Google Calendar read-only access.",
+          },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as Record<string, unknown>;
+      const choice = ((json.choices as Array<Record<string, unknown>> | undefined) ?? [])[0];
+      const message = (choice?.message as Record<string, unknown> | undefined)?.content;
+      expect(message).toContain("event_count: 2");
+      expect(message).toContain("source: authorized Google Calendar read");
+      expect(message).not.toContain("Happy birthday");
+      expect(message).not.toContain("person@example.com");
+      expect(agentCommand).toHaveBeenCalledTimes(0);
+      expect(receivedRequests).toEqual([
+        {
+          authorization: "Bearer runtime-token",
+          body: expect.objectContaining({
+            tool: "calendar_list_events",
+          }),
+        },
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        toolGatewayServer.close((err) => (err ? reject(err) : resolve())),
+      );
+      if (previousDirectChat === undefined) {
+        delete process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+      } else {
+        process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = previousDirectChat;
+      }
+      if (previousGatewayUrl === undefined) {
+        delete process.env.AGENTNEXUS_TOOL_GATEWAY_URL;
+      } else {
+        process.env.AGENTNEXUS_TOOL_GATEWAY_URL = previousGatewayUrl;
+      }
+      if (previousRuntimeToken === undefined) {
+        delete process.env.AGENTNEXUS_RUNTIME_TOKEN;
+      } else {
+        process.env.AGENTNEXUS_RUNTIME_TOKEN = previousRuntimeToken;
+      }
+    }
+  });
 });
