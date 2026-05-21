@@ -60,6 +60,7 @@ import { MediaOffloadError } from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { augmentChatHistoryWithCliSessionImports } from "../cli-session-history.js";
 import { isSuppressedControlReplyText } from "../control-reply-text.js";
+import { resolveAgentNexusRuntimeTextReply } from "../agentnexus-tool-gateway.js";
 import {
   attachManagedOutgoingImagesToMessage,
   cleanupManagedOutgoingImageRecords,
@@ -1580,6 +1581,67 @@ function appendAssistantTranscriptMessage(params: {
   });
 }
 
+function appendUserTranscriptMessage(params: {
+  message: string;
+  savedImages: SavedMedia[];
+  timestamp: number;
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  agentId?: string;
+  createIfMissing?: boolean;
+  idempotencyKey?: string;
+}): TranscriptAppendResult {
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+    agentId: params.agentId,
+  });
+  if (!transcriptPath) {
+    return { ok: false, error: "transcript path not resolved" };
+  }
+
+  if (!fs.existsSync(transcriptPath)) {
+    if (!params.createIfMissing) {
+      return { ok: false, error: "transcript file not found" };
+    }
+    const ensured = ensureTranscriptFile({
+      transcriptPath,
+      sessionId: params.sessionId,
+    });
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
+    }
+  }
+
+  if (params.idempotencyKey && transcriptHasIdempotencyKey(transcriptPath, params.idempotencyKey)) {
+    return { ok: true };
+  }
+
+  const message = {
+    ...buildChatSendTranscriptMessage({
+      message: params.message,
+      savedImages: params.savedImages,
+      timestamp: params.timestamp,
+    }),
+    ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+  };
+
+  try {
+    const sessionManager = SessionManager.open(transcriptPath);
+    const messageId = sessionManager.appendMessage(message);
+    emitSessionTranscriptUpdate({
+      sessionFile: transcriptPath,
+      message,
+      messageId,
+    });
+    return { ok: true, messageId, message };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function collectSessionAbortPartials(params: {
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatRunBuffers: Map<string, string>;
@@ -2490,6 +2552,91 @@ export const chatHandlers: GatewayRequestHandlers = {
           }
         },
       });
+
+      const agentNexusRuntimeReply = await resolveAgentNexusRuntimeTextReply({
+        text: parsedMessage,
+        now: new Date(now),
+        signal: activeRunAbort.controller.signal,
+      }).catch((err) => {
+        context.logGateway.warn(
+          `webchat AgentNexus Tool Gateway reply failed: ${formatForLog(err)}`,
+        );
+        return {
+          adapter: "agentnexus-tool-gateway" as const,
+          content: [
+            "AgentNexus Tool Gateway could not complete this runtime request.",
+            "",
+            "Use the AgentNexus Developer Sandbox for this tool check and retry after runtime diagnostics are healthy.",
+          ].join("\n"),
+        };
+      });
+      if (agentNexusRuntimeReply) {
+        const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(sessionKey);
+        const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+        const sessionFile = latestEntry?.sessionFile ?? entry?.sessionFile;
+        const persistedImages = await persistedImagesPromise;
+        const appendedUser = appendUserTranscriptMessage({
+          message: parsedMessage,
+          savedImages: persistedImages,
+          timestamp: now,
+          sessionId,
+          storePath: latestStorePath,
+          sessionFile,
+          agentId,
+          createIfMissing: true,
+          idempotencyKey: `${clientRunId}:user`,
+        });
+        if (!appendedUser.ok) {
+          context.logGateway.warn(
+            `webchat AgentNexus Tool Gateway user transcript append failed: ${
+              appendedUser.error ?? "unknown error"
+            }`,
+          );
+        }
+        const appendedAssistant = appendAssistantTranscriptMessage({
+          message: agentNexusRuntimeReply.content,
+          sessionId,
+          storePath: latestStorePath,
+          sessionFile,
+          agentId,
+          createIfMissing: true,
+          idempotencyKey: `${clientRunId}:${agentNexusRuntimeReply.adapter}`,
+        });
+        if (!appendedAssistant.ok) {
+          context.logGateway.warn(
+            `webchat AgentNexus Tool Gateway assistant transcript append failed: ${
+              appendedAssistant.error ?? "unknown error"
+            }`,
+          );
+        }
+        const fallbackMessage = {
+          role: "assistant",
+          content: [{ type: "text", text: agentNexusRuntimeReply.content }],
+          timestamp: Date.now(),
+          stopReason: "stop",
+          usage: { input: 0, output: 0, totalTokens: 0 },
+          provider: "openclaw",
+          model: "agentnexus-tool-gateway",
+        };
+        broadcastChatFinal({
+          context,
+          runId: clientRunId,
+          sessionKey,
+          message: appendedAssistant.message ?? fallbackMessage,
+        });
+        setGatewayDedupeEntry({
+          dedupe: context.dedupe,
+          key: `chat:${clientRunId}`,
+          entry: {
+            ts: Date.now(),
+            ok: true,
+            payload: { runId: clientRunId, status: "ok" as const },
+          },
+        });
+        activeRunAbort.cleanup();
+        context.removeChatRun(clientRunId, clientRunId, sessionKey);
+        return;
+      }
 
       // Surface accepted inbound turns immediately so transcript subscribers
       // (gateway watchers, MCP bridges, external channel backends) do not wait

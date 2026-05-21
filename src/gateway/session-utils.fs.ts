@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { SessionManager, type SessionEntry } from "@mariozechner/pi-coding-agent";
 import { deriveSessionTotalTokens, hasNonzeroUsage, normalizeUsage } from "../agents/usage.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { hasInterSessionUserProvenance } from "../sessions/input-provenance.js";
@@ -102,6 +103,11 @@ export function readSessionMessages(
     return [];
   }
 
+  const branchMessages = readSessionBranchMessages(filePath);
+  if (branchMessages) {
+    return branchMessages;
+  }
+
   const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/);
   const messages: unknown[] = [];
   let messageSeq = 0;
@@ -144,6 +150,62 @@ export function readSessionMessages(
     }
   }
   return messages;
+}
+
+function readSessionBranchMessages(filePath: string): unknown[] | null {
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw.includes('"parentId"')) {
+      return null;
+    }
+    const manager = SessionManager.open(filePath);
+    const branch = manager.getBranch();
+    if (branch.length === 0) {
+      return null;
+    }
+    const messages: unknown[] = [];
+    let messageSeq = 0;
+    let sawMessageEntry = false;
+    for (const entry of branch) {
+      if (entry.type === "message") {
+        sawMessageEntry = true;
+      }
+      const message = messageFromSessionEntry(entry, () => {
+        messageSeq += 1;
+        return messageSeq;
+      });
+      if (message) {
+        messages.push(message);
+      }
+    }
+    return sawMessageEntry && messages.length > 0 ? messages : null;
+  } catch {
+    return null;
+  }
+}
+
+function messageFromSessionEntry(entry: SessionEntry, nextSeq: () => number): unknown | null {
+  if (entry.type === "message") {
+    return attachOpenClawTranscriptMeta(entry.message, {
+      id: entry.id,
+      seq: nextSeq(),
+    });
+  }
+  if (entry.type === "compaction") {
+    const ts = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
+    const timestamp = Number.isFinite(ts) ? ts : Date.now();
+    return {
+      role: "system",
+      content: [{ type: "text", text: "Compaction" }],
+      timestamp,
+      __openclaw: {
+        kind: "compaction",
+        id: entry.id,
+        seq: nextSeq(),
+      },
+    };
+  }
+  return null;
 }
 
 export {

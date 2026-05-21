@@ -633,6 +633,57 @@ describe("gateway server chat", () => {
     });
   });
 
+  test("routes AgentNexus Tool Gateway prompts without dispatching duplicate native agent turns", async () => {
+    await withMainSessionStore(async () => {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              items: [
+                { summary: "Private FDA call", attendees: [{ email: "person@example.com" }] },
+                { summary: "Board review" },
+              ],
+            },
+          },
+        }),
+      })) as unknown as typeof fetch;
+
+      vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
+      vi.stubEnv("AGENTNEXUS_RUNTIME_TOKEN", "runtime-token");
+      vi.stubGlobal("fetch", fetchFn);
+      try {
+        const finalPromise = onceMessage(
+          ws,
+          (o) =>
+            o.type === "event" &&
+            o.event === "chat" &&
+            o.payload?.state === "final" &&
+            o.payload?.runId === "idem-agentnexus-tool-1",
+          CHAT_RESPONSE_TIMEOUT_MS,
+        );
+        const res = await rpcReq(ws, "chat.send", {
+          sessionKey: "main",
+          message: "Can you access Google Calendar and list events?",
+          idempotencyKey: "idem-agentnexus-tool-1",
+        });
+        expect(res.ok).toBe(true);
+        const finalEvent = await finalPromise;
+        const finalText = extractFirstTextBlock(finalEvent.payload?.message);
+        expect(finalText).toContain("event_count: 2");
+        expect(finalText).toContain("source: authorized Google Calendar read");
+        expect(finalText).not.toContain("Private FDA call");
+        expect(finalText).not.toContain("person@example.com");
+        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   test("routes /btw replies through side-result events without transcript injection", async () => {
     await withMainSessionStore(async (dir) => {
       await fs.writeFile(
