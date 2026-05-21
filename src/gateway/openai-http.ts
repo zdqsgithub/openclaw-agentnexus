@@ -31,6 +31,7 @@ import {
 } from "../shared/string-coerce.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
+  type AgentNexusRuntimeTextReply,
   resolveAgentNexusRuntimeTextReply,
 } from "./agentnexus-tool-gateway.js";
 import {
@@ -299,7 +300,7 @@ function sendAgentNexusRuntimeTextResponse(params: {
   content: string;
   stream: boolean;
   streamIncludeUsage: boolean;
-  adapter: "agentnexus-tool-gateway" | "agentnexus-channel-boundary";
+  adapter: AgentNexusRuntimeTextReply["adapter"];
 }) {
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   if (params.stream) {
