@@ -184,7 +184,7 @@ function readSessionBranchMessages(filePath: string): unknown[] | null {
   }
 }
 
-function messageFromSessionEntry(entry: SessionEntry, nextSeq: () => number): unknown | null {
+function messageFromSessionEntry(entry: SessionEntry, nextSeq: () => number): unknown {
   if (entry.type === "message") {
     return attachOpenClawTranscriptMeta(entry.message, {
       id: entry.id,

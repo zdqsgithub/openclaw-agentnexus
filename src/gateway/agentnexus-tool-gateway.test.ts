@@ -118,11 +118,39 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
-    expect(answer).toContain("event_count: 2");
-    expect(answer).toContain("source: authorized Google Calendar read");
+    expect(answer).toBe([
+      "event_count: 2",
+      "date_range: 2026-05-21T17:00:00.000Z to next authorized window",
+      "source: authorized Google Calendar read",
+    ].join("\n"));
     expect(answer).not.toContain("Happy birthday");
     expect(answer).not.toContain("person@example.com");
     expect(answer).not.toContain("Private FDA call");
+    expect(answer).not.toContain("redaction:");
+    expect(answer).not.toContain("AgentNexus Tool Gateway");
+  });
+
+  it("does not stringify non-text Calendar range arguments into runtime output", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "calendar_list_events",
+        intent: "google_calendar_read",
+        args: { timeMin: { raw: "2026-05-21T17:00:00.000Z" } },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: { items: [] },
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain("date_range: now to next authorized window");
+    expect(answer).not.toContain("[object Object]");
+    expect(answer).not.toContain("raw");
   });
 
   it("formats search results with concrete source URLs", () => {
@@ -179,8 +207,11 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply).toMatchObject({
       adapter: "agentnexus-tool-gateway",
     });
-    expect(reply?.content).toContain("event_count: 2");
-    expect(reply?.content).toContain("source: authorized Google Calendar read");
+    expect(reply?.content).toBe([
+      "event_count: 2",
+      "date_range: 2026-05-21T17:00:00.000Z to next authorized window",
+      "source: authorized Google Calendar read",
+    ].join("\n"));
     expect(reply?.content).not.toContain("Private event title");
     expect(reply?.content).not.toContain("person@example.com");
     expect(reply?.content).not.toContain("Board review");

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   filterSparseMissingOxlintTargets,
+  resolveOxlintBin,
   shouldPrepareExtensionPackageBoundaryArtifacts,
 } from "../../scripts/run-oxlint.mjs";
 
@@ -17,6 +18,11 @@ describe("run-oxlint", () => {
     expect(shouldPrepareExtensionPackageBoundaryArtifacts(["--version"])).toBe(false);
     expect(shouldPrepareExtensionPackageBoundaryArtifacts(["--print-config"])).toBe(false);
     expect(shouldPrepareExtensionPackageBoundaryArtifacts(["--rules"])).toBe(false);
+  });
+
+  it("uses a relative cmd shim on Windows so checkout paths with spaces are not split", () => {
+    expect(resolveOxlintBin("win32")).toBe("node_modules\\.bin\\oxlint.CMD");
+    expect(resolveOxlintBin("linux")).toMatch(/node_modules[\\/]\.bin[\\/]oxlint$/u);
   });
 
   it("does not run package-boundary artifact prep twice in pnpm check", () => {

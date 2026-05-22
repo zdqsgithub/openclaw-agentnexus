@@ -28,6 +28,20 @@ function removePathIfExists(targetPath) {
   fs.rmSync(targetPath, { recursive: true, force: true });
 }
 
+function renamePathWithTransientRetries(sourcePath, targetPath) {
+  for (let attempt = 0; attempt <= TEMP_REMOVE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      fs.renameSync(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (!isTransientTempRemoveError(error) || attempt === TEMP_REMOVE_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      sleepSync(TEMP_REMOVE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
 function isTransientTempRemoveError(error) {
   return (
     !!error &&
@@ -83,14 +97,14 @@ function replaceDirAtomically(targetPath, sourcePath) {
   let movedExistingTarget = false;
   try {
     if (fs.existsSync(targetPath)) {
-      fs.renameSync(targetPath, backupPath);
+      renamePathWithTransientRetries(targetPath, backupPath);
       movedExistingTarget = true;
     }
-    fs.renameSync(sourcePath, targetPath);
+    renamePathWithTransientRetries(sourcePath, targetPath);
     removePathIfExists(backupPath);
   } catch (error) {
     if (movedExistingTarget && !fs.existsSync(targetPath) && fs.existsSync(backupPath)) {
-      fs.renameSync(backupPath, targetPath);
+      renamePathWithTransientRetries(backupPath, targetPath);
     }
     throw error;
   }

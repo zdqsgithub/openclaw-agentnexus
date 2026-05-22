@@ -12,6 +12,7 @@ import {
   getSparseTsgoGuardError,
   shouldSkipSparseTsgoGuardError,
 } from "./lib/tsgo-sparse-guard.mjs";
+import { buildCmdExeCommandLine } from "./windows-cmd-helpers.mjs";
 
 const { args: finalArgs, env } = applyLocalTsgoPolicy(
   process.argv.slice(2),
@@ -19,6 +20,7 @@ const { args: finalArgs, env } = applyLocalTsgoPolicy(
 );
 
 const tsgoPath = path.resolve("node_modules", ".bin", "tsgo");
+const tsgoCmdPath = path.join("node_modules", ".bin", "tsgo.CMD");
 const tsBuildInfoFile = readFlagValue(finalArgs, "--tsBuildInfoFile");
 if (tsBuildInfoFile) {
   fs.mkdirSync(path.dirname(path.resolve(tsBuildInfoFile)), { recursive: true });
@@ -45,11 +47,22 @@ try {
       process.exitCode = 1;
     }
   } else {
-    const result = spawnSync(tsgoPath, finalArgs, {
-      stdio: "inherit",
-      env,
-      shell: process.platform === "win32",
-    });
+    const result = process.platform === "win32"
+      ? spawnSync(
+          process.env.ComSpec ?? "cmd.exe",
+          ["/d", "/s", "/c", buildCmdExeCommandLine(tsgoCmdPath, finalArgs)],
+          {
+            stdio: "inherit",
+            env,
+            shell: false,
+            windowsVerbatimArguments: true,
+          },
+        )
+      : spawnSync(tsgoPath, finalArgs, {
+          stdio: "inherit",
+          env,
+          shell: false,
+        });
 
     if (result.error) {
       throw result.error;
