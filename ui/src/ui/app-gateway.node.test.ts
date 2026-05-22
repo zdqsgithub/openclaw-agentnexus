@@ -109,6 +109,7 @@ vi.mock("./controllers/control-ui-bootstrap.ts", () => ({
 }));
 
 type TestGatewayHost = Parameters<typeof connectGateway>[0] & {
+  chatMessages: unknown[];
   chatSideResult: unknown;
   chatSideResultTerminalRuns: Set<string>;
   chatStream: string | null;

@@ -267,8 +267,20 @@ function messageDisplaySignature(message: unknown): string | null {
 function preserveOptimisticTailMessages(
   historyMessages: unknown[],
   previousMessages: unknown[],
+  opts?: { preserveOptimisticWhenHistoryEmpty?: boolean },
 ): unknown[] {
   if (historyMessages.length === 0 || previousMessages.length === 0) {
+    if (
+      historyMessages.length === 0 &&
+      opts?.preserveOptimisticWhenHistoryEmpty &&
+      previousMessages.length > 0 &&
+      previousMessages.every(
+        (message) =>
+          isLocallyOptimisticHistoryMessage(message) && !shouldHideHistoryMessage(message),
+      )
+    ) {
+      return previousMessages;
+    }
     return historyMessages;
   }
   const historySignatures = new Set(
@@ -405,7 +417,10 @@ export async function loadChatHistory(state: ChatState) {
     }
     const messages = Array.isArray(res.messages) ? res.messages : [];
     const visibleMessages = messages.filter((message) => !shouldHideHistoryMessage(message));
-    state.chatMessages = preserveOptimisticTailMessages(visibleMessages, previousMessages);
+    state.chatMessages = preserveOptimisticTailMessages(visibleMessages, previousMessages, {
+      preserveOptimisticWhenHistoryEmpty:
+        Boolean(state.chatRunId) || state.chatSending || state.chatStream !== null,
+    });
     state.chatThinkingLevel = res.thinkingLevel ?? null;
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
