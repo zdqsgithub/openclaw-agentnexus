@@ -857,6 +857,30 @@ describe("connectGateway", () => {
     expect(host.execApprovalQueue).toHaveLength(0);
   });
 
+  it("keeps final assistant events in memory without reloading empty history", () => {
+    const { host, client } = connectHostGateway();
+
+    client.emitEvent({
+      event: "chat",
+      payload: {
+        runId: "engine-run-1",
+        sessionKey: "main",
+        state: "final",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "OpenClaw compose QA marker" }],
+        },
+      },
+    });
+
+    expect(loadChatHistoryMock).not.toHaveBeenCalled();
+    expect(host.chatMessages).toHaveLength(1);
+    expect(host.chatMessages[0]).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "OpenClaw compose QA marker" }],
+    });
+  });
+
   it("reloads chat history once after the final chat event when tool output was used", () => {
     const { client } = connectHostGateway();
     emitToolResultEvent(client);
