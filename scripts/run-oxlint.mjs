@@ -9,7 +9,13 @@ import {
 } from "./lib/local-heavy-check-runtime.mjs";
 import { runManagedCommand } from "./lib/managed-child-process.mjs";
 
-const oxlintPath = path.resolve("node_modules", ".bin", "oxlint");
+export function resolveOxlintBin(platform = process.platform) {
+  return platform === "win32"
+    ? path.join("node_modules", ".bin", "oxlint.CMD")
+    : path.resolve("node_modules", ".bin", "oxlint");
+}
+
+const oxlintPath = resolveOxlintBin();
 const PREPARE_EXTENSION_BOUNDARY_ARGS = [
   path.resolve("scripts", "prepare-extension-package-boundary-artifacts.mjs"),
 ];

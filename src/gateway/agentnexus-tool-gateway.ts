@@ -280,14 +280,14 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
 
   if (params.request.intent === "google_calendar_read") {
     const eventCount = countResultItems(params.result.body);
-    const dateRange = `${String(params.request.args.timeMin ?? "now")} to next authorized window`;
+    const rangeStart = typeof params.request.args.timeMin === "string"
+      ? params.request.args.timeMin
+      : "now";
+    const dateRange = `${rangeStart} to next authorized window`;
     return [
-      "Authorized Google Calendar read completed through AgentNexus Tool Gateway.",
-      "",
       `event_count: ${eventCount}`,
       `date_range: ${dateRange}`,
       "source: authorized Google Calendar read",
-      "redaction: event titles, attendees, emails, locations, links, descriptions, and document contents are not shown in runtime chat.",
     ].join("\n");
   }
 

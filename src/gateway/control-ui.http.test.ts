@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import os from "node:os";
@@ -15,6 +16,23 @@ import {
   handleControlUiHttpRequest,
 } from "./control-ui.js";
 import { makeMockHttpResponse } from "./test-http-response.js";
+
+const symlinkIt = canCreateSymlinks() ? it : it.skip;
+
+function canCreateSymlinks() {
+  const root = fsSync.mkdtempSync(path.join(os.tmpdir(), "openclaw-symlink-probe-"));
+  try {
+    const targetFile = path.join(root, "target.txt");
+    const linkFile = path.join(root, "link.txt");
+    fsSync.writeFileSync(targetFile, "ok\n", "utf8");
+    fsSync.symlinkSync(targetFile, linkFile);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fsSync.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 describe("handleControlUiHttpRequest", () => {
   async function withControlUiRoot<T>(params: {
@@ -710,7 +728,7 @@ describe("handleControlUiHttpRequest", () => {
     }
   });
 
-  it("rejects avatar symlink paths from resolver", async () => {
+  symlinkIt("rejects avatar symlink paths from resolver", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-avatar-http-link-"));
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-avatar-http-outside-"));
     try {
@@ -853,7 +871,7 @@ describe("handleControlUiHttpRequest", () => {
     expectMissingOperatorReadResponse({ handled, res, end });
   });
 
-  it("rejects symlinked assets that resolve outside control-ui root", async () => {
+  symlinkIt("rejects symlinked assets that resolve outside control-ui root", async () => {
     await withControlUiRoot({
       fn: async (tmp) => {
         const assetsDir = path.join(tmp, "assets");
@@ -880,7 +898,7 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
-  it("allows symlinked assets that resolve inside control-ui root", async () => {
+  symlinkIt("allows symlinked assets that resolve inside control-ui root", async () => {
     await withControlUiRoot({
       fn: async (tmp) => {
         const { assetsDir, filePath } = await writeAssetFile(tmp, "actual.txt", "inside-ok\n");
@@ -917,7 +935,7 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
-  it("rejects symlinked SPA fallback index.html outside control-ui root", async () => {
+  symlinkIt("rejects symlinked SPA fallback index.html outside control-ui root", async () => {
     await withControlUiRoot({
       fn: async (tmp) => {
         const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ui-index-outside-"));
@@ -1113,7 +1131,7 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
-  it("rejects symlink escape attempts under basePath routes", async () => {
+  symlinkIt("rejects symlink escape attempts under basePath routes", async () => {
     await withBasePathRootFixture({
       siblingDir: "outside",
       fn: async ({ root, sibling }) => {

@@ -1402,8 +1402,11 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       const json = (await res.json()) as Record<string, unknown>;
       const choice = ((json.choices as Array<Record<string, unknown>> | undefined) ?? [])[0];
       const message = (choice?.message as Record<string, unknown> | undefined)?.content;
-      expect(message).toContain("event_count: 2");
-      expect(message).toContain("source: authorized Google Calendar read");
+      expect(String(message).split("\n")).toEqual([
+        "event_count: 2",
+        expect.stringMatching(/^date_range: .+ to next authorized window$/),
+        "source: authorized Google Calendar read",
+      ]);
       expect(message).not.toContain("Happy birthday");
       expect(message).not.toContain("person@example.com");
       expect(agentCommand).toHaveBeenCalledTimes(0);

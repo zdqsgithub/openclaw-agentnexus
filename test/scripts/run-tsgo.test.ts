@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,17 @@ import { createScriptTestHarness } from "./test-helpers.js";
 const { createTempDir } = createScriptTestHarness();
 
 describe("run-tsgo sparse guard", () => {
+  it("runs the local tsgo shim when the checkout path contains spaces", () => {
+    const result = spawnSync(process.execPath, ["scripts/run-tsgo.mjs", "--version"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("'Z:\\My'");
+  });
+
   it("ignores non-core projects", () => {
     const cwd = createTempDir("openclaw-run-tsgo-");
 

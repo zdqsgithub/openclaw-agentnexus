@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -9,6 +10,22 @@ import {
 import { createScriptTestHarness } from "./test-helpers.js";
 
 const { createTempDir } = createScriptTestHarness();
+const symlinkIt = canCreateSymlinks() ? it : it.skip;
+
+function canCreateSymlinks() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-symlink-probe-"));
+  try {
+    const targetDir = path.join(root, "target");
+    const linkDir = path.join(root, "link");
+    fs.mkdirSync(targetDir);
+    fs.symlinkSync(targetDir, linkDir);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 type RuntimeDepsStampParams = {
   fingerprint: string;
@@ -301,6 +318,53 @@ describe("stageBundledPluginRuntimeDeps", () => {
     );
   });
 
+  it("retries transient atomic rename races while staging runtime deps", () => {
+    const { pluginDir, repoRoot } = createBundledPluginFixture({
+      packageJson: {
+        name: "@openclaw/fixture-plugin",
+        version: "1.0.0",
+        dependencies: { direct: "1.0.0" },
+        openclaw: { bundle: { stageRuntimeDependencies: true } },
+      },
+    });
+    const directDir = path.join(repoRoot, "node_modules", "direct");
+    fs.mkdirSync(directDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(directDir, "package.json"),
+      '{ "name": "direct", "version": "1.0.0" }\n',
+      "utf8",
+    );
+    fs.writeFileSync(path.join(directDir, "index.js"), "module.exports = 'ok';\n", "utf8");
+
+    const realRenameSync = fs.renameSync.bind(fs);
+    let renameAttempts = 0;
+    vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+      if (
+        String(source).includes(".openclaw-runtime-deps-stage-") &&
+        String(target) === path.join(pluginDir, "node_modules") &&
+        renameAttempts === 0
+      ) {
+        renameAttempts += 1;
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      if (
+        String(source).includes(".openclaw-runtime-deps-stage-") &&
+        String(target) === path.join(pluginDir, "node_modules")
+      ) {
+        renameAttempts += 1;
+      }
+      return realRenameSync(source, target);
+    });
+
+    stageBundledPluginRuntimeDeps({ cwd: repoRoot });
+
+    expect(renameAttempts).toBe(2);
+    expect(fs.readFileSync(path.join(pluginDir, "node_modules", "direct", "index.js"), "utf8"))
+      .toBe("module.exports = 'ok';\n");
+  });
+
   it("restages when installed root runtime dependency contents change", () => {
     const { pluginDir, repoRoot } = createBundledPluginFixture({
       packageJson: {
@@ -366,12 +430,11 @@ describe("stageBundledPluginRuntimeDeps", () => {
         if (entry.name !== "package.json") {
           return entry;
         }
-        return {
-          ...entry,
+        return Object.assign(Object.create(Object.getPrototypeOf(entry)) as fs.Dirent, entry, {
           isSymbolicLink: () => true,
           isDirectory: () => false,
           isFile: () => false,
-        } as fs.Dirent;
+        });
       }) as never;
     }) as typeof fs.readdirSync);
 
@@ -390,7 +453,7 @@ describe("stageBundledPluginRuntimeDeps", () => {
     ).toBe("module.exports = 'direct';\n");
   });
 
-  it("refuses to replace a symlinked plugin node_modules directory", () => {
+  symlinkIt("refuses to replace a symlinked plugin node_modules directory", () => {
     const { pluginDir, repoRoot } = createBundledPluginFixture({
       packageJson: {
         name: "@openclaw/fixture-plugin",
@@ -417,7 +480,7 @@ describe("stageBundledPluginRuntimeDeps", () => {
     );
   });
 
-  it("refuses to write a runtime deps stamp through a symlink", () => {
+  symlinkIt("refuses to write a runtime deps stamp through a symlink", () => {
     const { repoRoot } = createBundledPluginFixture({
       packageJson: {
         name: "@openclaw/fixture-plugin",
@@ -726,7 +789,7 @@ describe("stageBundledPluginRuntimeDeps", () => {
     ).toBe("module.exports = 'nested';\n");
   });
 
-  it("falls back to install when a dependency tree contains an unowned symlinked directory", () => {
+  symlinkIt("falls back to install when a dependency tree contains an unowned symlinked directory", () => {
     const { pluginDir, repoRoot } = createBundledPluginFixture({
       packageJson: {
         name: "@openclaw/fixture-plugin",
@@ -770,7 +833,7 @@ describe("stageBundledPluginRuntimeDeps", () => {
     );
   });
 
-  it("dedupes cyclic dependency aliases by canonical root", () => {
+  symlinkIt("dedupes cyclic dependency aliases by canonical root", () => {
     const { pluginDir, repoRoot } = createBundledPluginFixture({
       packageJson: {
         name: "@openclaw/fixture-plugin",
@@ -845,7 +908,7 @@ describe("stageBundledPluginRuntimeDeps", () => {
     );
   });
 
-  it("falls back to install when a staged dependency tree contains a symlink outside copied roots", () => {
+  symlinkIt("falls back to install when a staged dependency tree contains a symlink outside copied roots", () => {
     const { pluginDir, repoRoot } = createBundledPluginFixture({
       packageJson: {
         name: "@openclaw/fixture-plugin",
