@@ -12,4 +12,11 @@ describe("Dockerfile.agentnexus", () => {
     expect(source).toContain('npm install -g "bun@${BUN_VERSION}"');
     expect(source).toContain("bun --version");
   });
+
+  it("does not hard-fail the AgentNexus runtime image on optional Matrix native addon downloads", () => {
+    const source = readFileSync(join(repoRoot, "Dockerfile.agentnexus"), "utf8");
+
+    expect(source).toContain("Matrix native addon unavailable; continuing AgentNexus runtime build");
+    expect(source).not.toContain("ERROR: matrix-sdk-crypto native addon missing");
+  });
 });
