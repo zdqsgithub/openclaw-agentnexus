@@ -50,6 +50,21 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(request?.args.query).toContain("FDA AI device guidance");
   });
 
+  it("maps governed skill requests to AgentNexus runtime skill execution", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "/skill demo-summary-style Summarize a launch note for a VC demo.",
+    );
+
+    expect(request).toEqual({
+      tool: "runtime_skill_execute",
+      intent: "governed_skill",
+      args: {
+        skillId: "demo-summary-style",
+        input: "Summarize a launch note for a VC demo.",
+      },
+    });
+  });
+
   it("keeps channel publish setup in the AgentNexus governed Publish path", () => {
     const answer = buildChannelPublishBoundaryAnswer(
       "I want to set up Slack or Telegram channel access.",
@@ -176,6 +191,44 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
 
     expect(answer).toContain("https://www.fda.gov/medical-devices/software-medical-device-samd");
+  });
+
+  it("formats governed skill results without leaking raw skill metadata", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "runtime_skill_execute",
+        intent: "governed_skill",
+        args: { skillId: "demo-summary-style", input: "private raw input" },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              skillStatus: "executed",
+              skillId: "demo-summary-style",
+              output: {
+                format: "demo_safe_summary",
+                summary: "Demo-safe summary with private values redacted.",
+                redacted: true,
+              },
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toBe([
+      "skill_status: executed",
+      "skill_id: demo-summary-style",
+      "summary: Demo-safe summary with private values redacted.",
+      "source: AgentNexus governed skills catalog",
+    ].join("\n"));
+    expect(answer).not.toContain("private raw input");
+    expect(answer).not.toContain("manifestHash");
+    expect(answer).not.toContain("Bearer");
   });
 
   it("resolves runtime text replies through the same Tool Gateway path used by native chat", async () => {
