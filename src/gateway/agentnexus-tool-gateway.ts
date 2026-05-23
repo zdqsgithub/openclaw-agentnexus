@@ -317,6 +317,7 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
       `skill_id: ${skillId}`,
       `summary: ${summary}`,
       "source: AgentNexus governed skills catalog",
+      "redacted: true",
     ].join("\n");
   }
 

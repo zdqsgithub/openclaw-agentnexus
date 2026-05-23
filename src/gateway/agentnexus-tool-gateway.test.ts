@@ -225,6 +225,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       "skill_id: demo-summary-style",
       "summary: Demo-safe summary with private values redacted.",
       "source: AgentNexus governed skills catalog",
+      "redacted: true",
     ].join("\n"));
     expect(answer).not.toContain("private raw input");
     expect(answer).not.toContain("manifestHash");
