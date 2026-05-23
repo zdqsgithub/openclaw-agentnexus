@@ -220,6 +220,39 @@ describe("renderSkills", () => {
     expect(onClawHubInstall).toHaveBeenCalledTimes(1);
     expect(onClawHubInstall).toHaveBeenCalledWith("github");
   });
+
+  it("shows AgentNexus governed skills as a separate production-governed group", async () => {
+    const container = document.createElement("div");
+    const report: SkillStatusReport = {
+      workspaceDir: "/tmp/workspace",
+      managedSkillsDir: "/tmp/skills",
+      skills: [
+        createSkill({
+          name: "Demo-safe summary style",
+          description: "Curated AgentNexus prompt skill.",
+          source: "agentnexus-governed",
+          skillKey: "demo-summary-style",
+          primaryEnv: undefined,
+          bundled: false,
+          eligible: true,
+        }),
+        createSkill({
+          name: "Built-in Skill",
+          source: "openclaw-bundled",
+          skillKey: "built-in",
+          bundled: true,
+        }),
+      ],
+    };
+
+    render(renderSkills(createProps({ report })), container);
+    await Promise.resolve();
+
+    const text = normalizeText(container);
+    expect(text).toContain("AgentNexus Governed Skills");
+    expect(text).toContain("Demo-safe summary style");
+    expect(text).toContain("Built-in Skills");
+  });
 });
 
 function installDialogMethod(

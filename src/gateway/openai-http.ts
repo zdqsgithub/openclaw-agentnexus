@@ -31,13 +31,13 @@ import {
 } from "../shared/string-coerce.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
-  type AgentNexusRuntimeTextReply,
-  resolveAgentNexusRuntimeTextReply,
-} from "./agentnexus-tool-gateway.js";
-import {
   buildAgentMessageFromConversationEntries,
   type ConversationEntry,
 } from "./agent-prompt.js";
+import {
+  type AgentNexusRuntimeTextReply,
+  resolveAgentNexusRuntimeTextReply,
+} from "./agentnexus-tool-gateway.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { sendJson, setSseHeaders, watchClientDisconnect, writeDone } from "./http-common.js";
@@ -256,7 +256,8 @@ function stringifyOpenAiContent(value: unknown): string {
       if (!part || typeof part !== "object") {
         return "";
       }
-      const text = (part as { text?: unknown; content?: unknown }).text ??
+      const text =
+        (part as { text?: unknown; content?: unknown }).text ??
         (part as { text?: unknown; content?: unknown }).content;
       return typeof text === "string" ? text : "";
     })
@@ -377,29 +378,33 @@ function postOpenRouterJson(params: {
 }): Promise<{ statusCode: number; text: string }> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(params.payload);
-    const req = httpsRequest("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${params.apiKey}`,
-        "content-type": "application/json",
-        "content-length": String(Buffer.byteLength(body)),
-        "HTTP-Referer": "https://agtnx.ai",
-        "X-Title": "AgentNexus",
+    const req = httpsRequest(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${params.apiKey}`,
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(body)),
+          "HTTP-Referer": "https://agtnx.ai",
+          "X-Title": "AgentNexus",
+        },
       },
-    }, (response) => {
-      const chunks: string[] = [];
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => {
-        chunks.push(String(chunk));
-      });
-      response.on("end", () => {
-        cleanup();
-        resolve({
-          statusCode: response.statusCode ?? 0,
-          text: chunks.join(""),
+      (response) => {
+        const chunks: string[] = [];
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          chunks.push(String(chunk));
         });
-      });
-    });
+        response.on("end", () => {
+          cleanup();
+          resolve({
+            statusCode: response.statusCode ?? 0,
+            text: chunks.join(""),
+          });
+        });
+      },
+    );
 
     const cleanup = () => {
       params.signal.removeEventListener("abort", onAbort);
@@ -504,7 +509,11 @@ async function handleAgentNexusDirectOpenRouterChat(params: {
         writeUsageChunk(params.res, {
           runId: params.runId,
           model: params.model,
-          usage: usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number },
+          usage: usage as {
+            prompt_tokens: number;
+            completion_tokens: number;
+            total_tokens: number;
+          },
         });
       }
       writeDone(params.res);
@@ -623,6 +632,216 @@ type ActiveTurnContext = {
   urls: string[];
 };
 
+type AgentNexusRuntimeSkillCommand = {
+  skillId: string;
+  input: string;
+};
+
+type AgentNexusRuntimeSkillResult = {
+  skillStatus?: unknown;
+  skillId?: unknown;
+  kind?: unknown;
+  version?: unknown;
+  output?: unknown;
+  redacted?: unknown;
+};
+
+function extractLatestUserText(messagesUnknown: unknown): string {
+  const messages = asMessages(messagesUnknown);
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
+    const role = normalizeOptionalString(msg.role) ?? "";
+    if (role !== "user") {
+      continue;
+    }
+    return extractTextContent(msg.content).trim();
+  }
+  return "";
+}
+
+function parseAgentNexusRuntimeSkillCommand(input: string): AgentNexusRuntimeSkillCommand | null {
+  const match = /^\s*\/skill\s+([a-z0-9][a-z0-9-]{2,80})(?:\s+([\s\S]*))?$/u.exec(input);
+  if (!match) {
+    return null;
+  }
+  return {
+    skillId: match[1],
+    input: (match[2] ?? "").trim(),
+  };
+}
+
+function readAgentNexusRuntimeToolGatewayConfig(): { url: string; token: string } | null {
+  const url = normalizeOptionalString(process.env.AGENTNEXUS_TOOL_GATEWAY_URL) ?? "";
+  const token = normalizeOptionalString(process.env.AGENTNEXUS_RUNTIME_TOKEN) ?? "";
+  if (!url || !token) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+      return null;
+    }
+    return { url: parsed.toString(), token };
+  } catch {
+    return null;
+  }
+}
+
+async function executeAgentNexusRuntimeSkillCommand(
+  command: AgentNexusRuntimeSkillCommand,
+  signal: AbortSignal,
+): Promise<AgentNexusRuntimeSkillResult | null> {
+  const config = readAgentNexusRuntimeToolGatewayConfig();
+  if (!config) {
+    return null;
+  }
+  const response = await fetch(config.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.token}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      tool: "runtime_skill_execute",
+      args: {
+        skillId: command.skillId,
+        input: command.input,
+      },
+    }),
+    signal,
+  });
+  if (!response.ok) {
+    return {
+      skillStatus: "unavailable",
+      skillId: command.skillId,
+      output: {
+        status: "tool_gateway_unavailable",
+      },
+      redacted: true,
+    };
+  }
+  const body = await response.json().catch(() => null);
+  const result =
+    body && typeof body === "object"
+      ? (body as { data?: { result?: unknown } }).data?.result
+      : null;
+  return result && typeof result === "object" ? (result as AgentNexusRuntimeSkillResult) : null;
+}
+
+function formatAgentNexusRuntimeSkillResult(result: AgentNexusRuntimeSkillResult | null): string {
+  const output =
+    result?.output && typeof result.output === "object"
+      ? (result.output as Record<string, unknown>)
+      : {};
+  const skillStatus = normalizeOptionalString(result?.skillStatus) ?? "unavailable";
+  const skillId = normalizeOptionalString(result?.skillId) ?? "unknown";
+  const kind = normalizeOptionalString(result?.kind) ?? "runtime_skill";
+  const version = normalizeOptionalString(result?.version) ?? "unknown";
+  const summary =
+    normalizeOptionalString(output.summary) ??
+    normalizeOptionalString(output.status) ??
+    "Governed runtime skill returned no summary.";
+  return [
+    `skill_status: ${skillStatus}`,
+    `skill_id: ${skillId}`,
+    `kind: ${kind}`,
+    `version: ${version}`,
+    "source: AgentNexus governed skills catalog",
+    `summary: ${summary}`,
+    "redacted: true",
+  ].join("\n");
+}
+
+function writeAgentNexusRuntimeSkillResponse(params: {
+  res: ServerResponse;
+  runId: string;
+  model: string;
+  content: string;
+  stream: boolean;
+  streamIncludeUsage: boolean;
+}) {
+  if (params.stream) {
+    setSseHeaders(params.res);
+    writeAssistantRoleChunk(params.res, { runId: params.runId, model: params.model });
+    writeAssistantContentChunk(params.res, {
+      runId: params.runId,
+      model: params.model,
+      content: params.content,
+      finishReason: null,
+    });
+    writeAssistantStopChunk(params.res, { runId: params.runId, model: params.model });
+    if (params.streamIncludeUsage) {
+      writeUsageChunk(params.res, {
+        runId: params.runId,
+        model: params.model,
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+    }
+    writeDone(params.res);
+    params.res.end();
+    return;
+  }
+  sendJson(params.res, 200, {
+    id: params.runId,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: params.content },
+        finish_reason: "stop",
+      },
+    ],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  });
+}
+
+async function handleAgentNexusRuntimeSkillChat(params: {
+  command: AgentNexusRuntimeSkillCommand;
+  res: ServerResponse;
+  runId: string;
+  model: string;
+  stream: boolean;
+  streamIncludeUsage: boolean;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  try {
+    const result = await executeAgentNexusRuntimeSkillCommand(params.command, params.signal);
+    writeAgentNexusRuntimeSkillResponse({
+      res: params.res,
+      runId: params.runId,
+      model: params.model,
+      stream: params.stream,
+      streamIncludeUsage: params.streamIncludeUsage,
+      content: formatAgentNexusRuntimeSkillResult(result),
+    });
+  } catch (err) {
+    if (params.signal.aborted) {
+      return true;
+    }
+    logWarn(`openai-compat: AgentNexus runtime skill failed: ${String(err)}`);
+    writeAgentNexusRuntimeSkillResponse({
+      res: params.res,
+      runId: params.runId,
+      model: params.model,
+      stream: params.stream,
+      streamIncludeUsage: params.streamIncludeUsage,
+      content: formatAgentNexusRuntimeSkillResult({
+        skillStatus: "unavailable",
+        skillId: params.command.skillId,
+        output: { status: "tool_gateway_unavailable" },
+        redacted: true,
+      }),
+    });
+  }
+  return true;
+}
+
 function parseImageUrlToSource(url: string): InputImageSource {
   const dataUriMatch = /^data:([^,]*?),(.*)$/is.exec(url);
   if (dataUriMatch) {
@@ -710,6 +929,8 @@ async function resolveImagesForRequest(
 }
 
 export const __testOnlyOpenAiHttp = {
+  formatAgentNexusRuntimeSkillResult,
+  parseAgentNexusRuntimeSkillCommand,
   resolveImagesForRequest,
   resolveOpenAiChatCompletionsLimits,
   resolveChatCompletionUsage,
@@ -885,6 +1106,20 @@ export async function handleOpenAiHttpRequest(
   const user = typeof payload.user === "string" ? payload.user : undefined;
   const runId = `chatcmpl_${randomUUID()}`;
   const abortController = new AbortController();
+  const runtimeSkillCommand = parseAgentNexusRuntimeSkillCommand(
+    extractLatestUserText(payload.messages),
+  );
+  if (runtimeSkillCommand) {
+    return await handleAgentNexusRuntimeSkillChat({
+      command: runtimeSkillCommand,
+      res,
+      runId,
+      model,
+      stream,
+      streamIncludeUsage,
+      signal: abortController.signal,
+    });
+  }
 
   if (shouldUseAgentNexusDirectOpenRouterChat()) {
     return await handleAgentNexusDirectOpenRouterChat({

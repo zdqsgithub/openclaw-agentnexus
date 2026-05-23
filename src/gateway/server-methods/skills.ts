@@ -444,7 +444,9 @@ function readGovernedSkillsFromManifest(body: unknown): AgentNexusGovernedSkillM
     .filter((entry): entry is AgentNexusGovernedSkillManifestEntry => entry !== null);
 }
 
-function normalizeGovernedSkillManifestEntry(value: unknown): AgentNexusGovernedSkillManifestEntry | null {
+function normalizeGovernedSkillManifestEntry(
+  value: unknown,
+): AgentNexusGovernedSkillManifestEntry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
