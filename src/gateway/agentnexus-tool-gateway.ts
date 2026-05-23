@@ -1,9 +1,9 @@
-type RuntimeToolName = "web_search" | "calendar_list_events";
+type RuntimeToolName = "web_search" | "calendar_list_events" | "runtime_skill_execute";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
   args: Record<string, unknown>;
-  intent: "web_search" | "google_calendar_read";
+  intent: "web_search" | "google_calendar_read" | "governed_skill";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -64,6 +64,10 @@ export function resolveAgentNexusRuntimeToolRequest(
   const lower = normalized.toLowerCase();
   if (!normalized) {
     return null;
+  }
+  const governedSkill = parseGovernedSkillRequest(normalized);
+  if (governedSkill) {
+    return governedSkill;
   }
 
   if (
@@ -291,6 +295,31 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     ].join("\n");
   }
 
+  if (params.request.intent === "governed_skill") {
+    const result = readToolResult(params.result.body);
+    const record = result && typeof result === "object" && !Array.isArray(result)
+      ? result as Record<string, unknown>
+      : {};
+    const output = record.output && typeof record.output === "object" && !Array.isArray(record.output)
+      ? record.output as Record<string, unknown>
+      : {};
+    const skillStatus = typeof record.skillStatus === "string" ? record.skillStatus : "unknown";
+    const skillId = typeof record.skillId === "string"
+      ? record.skillId
+      : typeof params.request.args.skillId === "string"
+        ? params.request.args.skillId
+        : "unknown";
+    const summary = typeof output.summary === "string" && output.summary.trim()
+      ? output.summary.trim()
+      : "Governed skill completed without a text summary.";
+    return [
+      `skill_status: ${skillStatus}`,
+      `skill_id: ${skillId}`,
+      `summary: ${summary}`,
+      "source: AgentNexus governed skills catalog",
+    ].join("\n");
+  }
+
   const urls = extractCitationUrls(params.result.body);
   return [
     "Cited web search completed through AgentNexus Tool Gateway.",
@@ -300,6 +329,34 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
       : "source_urls: none returned",
     "redaction: provider credentials and server-side search keys stay in AgentNexus.",
   ].join("\n");
+}
+
+function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const slashMatch = text.match(/^\/skill\s+([a-z0-9][a-z0-9-]{2,80})(?:\s+([\s\S]*))?$/i);
+  if (slashMatch) {
+    return {
+      tool: "runtime_skill_execute",
+      intent: "governed_skill",
+      args: {
+        skillId: slashMatch[1]?.toLowerCase(),
+        input: (slashMatch[2] ?? "").trim(),
+      },
+    };
+  }
+
+  const lower = text.toLowerCase();
+  if (/\b(governed skill|runtime skill|demo-summary-style|summary skill|weather skill)\b/.test(lower)) {
+    return {
+      tool: "runtime_skill_execute",
+      intent: "governed_skill",
+      args: {
+        skillId: lower.includes("weather skill") ? "tool-gateway-redacted-evidence" : "demo-summary-style",
+        input: text.slice(0, 1_000),
+      },
+    };
+  }
+
+  return null;
 }
 
 function countResultItems(body: Record<string, unknown>) {

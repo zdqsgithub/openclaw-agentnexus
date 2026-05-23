@@ -10,7 +10,7 @@ import {
   updateSkillsFromClawHub,
 } from "../../agents/skills-clawhub.js";
 import { installSkill } from "../../agents/skills-install.js";
-import { buildWorkspaceSkillStatus } from "../../agents/skills-status.js";
+import { buildWorkspaceSkillStatus, type SkillStatusEntry } from "../../agents/skills-status.js";
 import { loadWorkspaceSkillEntries, type SkillEntry } from "../../agents/skills.js";
 import { listAgentWorkspaceDirs } from "../../agents/workspace-dirs.js";
 import { loadConfig, writeConfigFile } from "../../config/config.js";
@@ -66,7 +66,7 @@ function collectSkillBins(entries: SkillEntry[]): string[] {
 }
 
 export const skillsHandlers: GatewayRequestHandlers = {
-  "skills.status": ({ params, respond }) => {
+  "skills.status": async ({ params, respond }) => {
     if (!validateSkillsStatusParams(params)) {
       respond(
         false,
@@ -104,6 +104,10 @@ export const skillsHandlers: GatewayRequestHandlers = {
         }),
       },
     });
+    const governedSkills = await loadAgentNexusGovernedSkillStatusEntries();
+    if (governedSkills.length > 0) {
+      report.skills = [...governedSkills, ...report.skills];
+    }
     respond(true, report, undefined);
   },
   "skills.bins": ({ params, respond }) => {
@@ -344,3 +348,125 @@ export const skillsHandlers: GatewayRequestHandlers = {
     respond(true, { ok: true, skillKey: p.skillKey, config: current }, undefined);
   },
 };
+
+async function loadAgentNexusGovernedSkillStatusEntries(): Promise<SkillStatusEntry[]> {
+  const manifestUrl = process.env.AGENTNEXUS_TOOL_MANIFEST_URL?.trim();
+  const runtimeToken = process.env.AGENTNEXUS_RUNTIME_TOKEN?.trim();
+  if (!manifestUrl || !runtimeToken) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(manifestUrl, {
+      method: "GET",
+      redirect: "error",
+      headers: {
+        authorization: `Bearer ${runtimeToken}`,
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = await response.json().catch(() => null);
+    const skills = readGovernedSkillsFromManifest(body);
+    return skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      source: "agentnexus-governed",
+      bundled: false,
+      filePath: "AgentNexus governed catalog",
+      baseDir: "AgentNexus Tool Gateway",
+      skillKey: skill.id,
+      always: false,
+      disabled: !skill.enabled,
+      blockedByAllowlist: false,
+      eligible: skill.enabled,
+      requirements: {
+        bins: [],
+        anyBins: [],
+        env: [],
+        config: [],
+        os: [],
+      },
+      missing: {
+        bins: [],
+        anyBins: [],
+        env: [],
+        config: [],
+        os: [],
+      },
+      configChecks: [
+        {
+          path: `agentnexus.version.${skill.version}`,
+          satisfied: true,
+        },
+        {
+          path: skill.editable ? "agentnexus.prompt_editable" : "agentnexus.tool_gateway_skill",
+          satisfied: true,
+        },
+      ],
+      install: [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+type AgentNexusGovernedSkillManifestEntry = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  editable: boolean;
+  version: string;
+  manifestHash: string;
+};
+
+function readGovernedSkillsFromManifest(body: unknown): AgentNexusGovernedSkillManifestEntry[] {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return [];
+  }
+  const data = (body as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return [];
+  }
+  const manifest = (data as { manifest?: unknown }).manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return [];
+  }
+  const governedSkills = (manifest as { governedSkills?: unknown }).governedSkills;
+  if (!Array.isArray(governedSkills)) {
+    return [];
+  }
+  return governedSkills
+    .map((entry) => normalizeGovernedSkillManifestEntry(entry))
+    .filter((entry): entry is AgentNexusGovernedSkillManifestEntry => entry !== null);
+}
+
+function normalizeGovernedSkillManifestEntry(value: unknown): AgentNexusGovernedSkillManifestEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    !/^[a-z0-9][a-z0-9-]{2,80}$/.test(record.id) ||
+    typeof record.name !== "string" ||
+    typeof record.description !== "string" ||
+    typeof record.version !== "string" ||
+    typeof record.manifestHash !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/.test(record.manifestHash)
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    enabled: record.enabled !== false,
+    editable: record.editable === true,
+    version: record.version,
+    manifestHash: record.manifestHash,
+  };
+}
