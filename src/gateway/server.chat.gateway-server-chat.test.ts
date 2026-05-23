@@ -732,6 +732,60 @@ describe("gateway server chat", () => {
     });
   });
 
+  test("routes managed runtime replies back to the requested browser session key", async () => {
+    await withMainSessionStore(async () => {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              skillStatus: "executed",
+              skillId: "demo-summary-style",
+              output: {
+                summary: "Demo-safe runtime skills proof.",
+              },
+              redacted: true,
+            },
+          },
+        }),
+      })) as unknown as typeof fetch;
+
+      vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
+      vi.stubEnv("AGENTNEXUS_RUNTIME_TOKEN", "runtime-token");
+      vi.stubGlobal("fetch", fetchFn);
+      try {
+        const requestedSessionKey = "qa-skills-redacted";
+        const finalPromise = onceMessage(
+          ws,
+          (o) =>
+            o.type === "event" &&
+            o.event === "chat" &&
+            o.payload?.state === "final" &&
+            o.payload?.runId === "idem-agentnexus-skill-raw-session-1",
+          CHAT_RESPONSE_TIMEOUT_MS,
+        );
+        const res = await rpcReq(ws, "chat.send", {
+          sessionKey: requestedSessionKey,
+          message: "/skill demo-summary-style summarize a demo-safe runtime skills proof",
+          idempotencyKey: "idem-agentnexus-skill-raw-session-1",
+        });
+        expect(res.ok).toBe(true);
+        const finalEvent = await finalPromise;
+        expect(finalEvent.payload?.sessionKey).toBe(requestedSessionKey);
+        const finalText = extractFirstTextBlock(finalEvent.payload?.message);
+        expect(finalText).toContain("skill_status: executed");
+        expect(finalText).toContain("skill_id: demo-summary-style");
+        expect(finalText).toContain("redacted: true");
+        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   test("routes missing Tool Gateway token failures without native agent dispatch", async () => {
     await withMainSessionStore(async () => {
       vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
