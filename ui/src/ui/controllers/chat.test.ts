@@ -844,6 +844,35 @@ describe("loadChatHistory", () => {
     expect(state.chatLoading).toBe(false);
   });
 
+  it("keeps just-finalized local chat messages when a late empty history snapshot arrives", async () => {
+    const localUser = {
+      role: "user",
+      content: [{ type: "text", text: "qa marker ask" }],
+      timestamp: 10,
+    };
+    const localAssistant = {
+      role: "assistant",
+      content: [{ type: "text", text: "qa marker answer" }],
+      timestamp: 11,
+    };
+    const request = vi.fn().mockResolvedValue({
+      messages: [],
+    });
+    const state = createState({
+      connected: true,
+      client: { request } as unknown as ChatState["client"],
+      chatMessages: [localUser, localAssistant],
+      chatRunId: null,
+      chatSending: false,
+      chatStream: null,
+    });
+
+    await loadChatHistory(state);
+
+    expect(state.chatMessages).toEqual([localUser, localAssistant]);
+    expect(state.chatLoading).toBe(false);
+  });
+
   it("does not duplicate optimistic tail messages after history catches up", async () => {
     const optimisticUser = {
       role: "user",
