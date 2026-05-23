@@ -2621,7 +2621,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         broadcastChatFinal({
           context,
           runId: clientRunId,
-          sessionKey,
+          sessionKey: rawSessionKey,
           message: appendedAssistant.message ?? fallbackMessage,
         });
         setGatewayDedupeEntry({
