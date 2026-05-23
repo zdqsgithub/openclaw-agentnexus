@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { __testOnlyOpenAiHttp } from "./openai-http.js";
 
-const { resolveChatCompletionUsage } = __testOnlyOpenAiHttp;
+const {
+  formatAgentNexusRuntimeSkillResult,
+  parseAgentNexusRuntimeSkillCommand,
+  resolveChatCompletionUsage,
+} = __testOnlyOpenAiHttp;
 
 describe("resolveChatCompletionUsage", () => {
   it("maps agentMeta.usage to OpenAI prompt/completion/total fields", () => {
@@ -74,5 +78,40 @@ describe("resolveChatCompletionUsage", () => {
       completion_tokens: 0,
       total_tokens: 0,
     });
+  });
+});
+
+describe("AgentNexus runtime skill command helpers", () => {
+  it("parses governed skill slash commands without accepting arbitrary text", () => {
+    expect(parseAgentNexusRuntimeSkillCommand("/skill demo-summary-style summarize this")).toEqual({
+      skillId: "demo-summary-style",
+      input: "summarize this",
+    });
+    expect(parseAgentNexusRuntimeSkillCommand(" /skill runtime-session-qa ")).toEqual({
+      skillId: "runtime-session-qa",
+      input: "",
+    });
+    expect(parseAgentNexusRuntimeSkillCommand("please use a skill")).toBeNull();
+    expect(parseAgentNexusRuntimeSkillCommand("/skill ../../etc/passwd nope")).toBeNull();
+  });
+
+  it("formats governed skill results without exposing raw payload envelopes", () => {
+    const text = formatAgentNexusRuntimeSkillResult({
+      skillStatus: "executed",
+      skillId: "demo-summary-style",
+      kind: "prompt_skill",
+      version: "1.0.0",
+      output: {
+        summary: "Redacted summary",
+        ignoredRaw: "do not print",
+      },
+      redacted: true,
+    });
+
+    expect(text).toContain("skill_status: executed");
+    expect(text).toContain("skill_id: demo-summary-style");
+    expect(text).toContain("source: AgentNexus governed skills catalog");
+    expect(text).toContain("summary: Redacted summary");
+    expect(text).not.toContain("ignoredRaw");
   });
 });
