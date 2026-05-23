@@ -270,9 +270,16 @@ function preserveOptimisticTailMessages(
   opts?: { preserveOptimisticWhenHistoryEmpty?: boolean },
 ): unknown[] {
   if (historyMessages.length === 0 || previousMessages.length === 0) {
+    const hasLocalAssistantMessage = previousMessages.some((message) => {
+      if (!isLocallyOptimisticHistoryMessage(message) || shouldHideHistoryMessage(message)) {
+        return false;
+      }
+      const role = normalizeLowercaseStringOrEmpty((message as { role?: unknown }).role);
+      return role === "assistant";
+    });
     if (
       historyMessages.length === 0 &&
-      opts?.preserveOptimisticWhenHistoryEmpty &&
+      (opts?.preserveOptimisticWhenHistoryEmpty || hasLocalAssistantMessage) &&
       previousMessages.length > 0 &&
       previousMessages.every(
         (message) =>
