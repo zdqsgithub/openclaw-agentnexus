@@ -64,6 +64,7 @@ import {
   extractAgentNexusRuntimeConversationText,
   resolveAgentNexusRuntimeTextReply,
 } from "../agentnexus-tool-gateway.js";
+import { ensureAgentNexusRuntimeSessionEntry } from "../agentnexus-runtime-session-context.js";
 import {
   attachManagedOutgoingImagesToMessage,
   cleanupManagedOutgoingImageRecords,
@@ -2202,7 +2203,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       return;
     }
     const rawSessionKey = p.sessionKey;
-    const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+    const { cfg, storePath, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
     const deletedAgentId = resolveDeletedAgentIdFromSessionKey(cfg, sessionKey);
     if (deletedAgentId !== null) {
       respond(
@@ -2572,6 +2573,19 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       });
 
+      const agentNexusRuntimeEntry = await ensureAgentNexusRuntimeSessionEntry({
+        storePath,
+        sessionKey,
+        sessionId: entry?.sessionId ?? clientRunId,
+        sessionFile: entry?.sessionFile,
+        now,
+      }).catch((err) => {
+        context.logGateway.warn(
+          `webchat AgentNexus Tool Gateway session context update failed: ${formatForLog(err)}`,
+        );
+        return entry ?? null;
+      });
+
       const agentNexusRuntimeReply = await resolveAgentNexusRuntimeTextReply({
         text: parsedMessage,
         now: new Date(now),
@@ -2579,7 +2593,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         conversationText: extractAgentNexusRuntimeConversationText(
           readAgentNexusRuntimeConversationMessages({
             sessionKey,
-            fallbackEntry: entry,
+            fallbackEntry: agentNexusRuntimeEntry ?? entry,
           }),
         ),
       }).catch((err) => {
