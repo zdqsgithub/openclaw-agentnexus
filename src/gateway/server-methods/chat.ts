@@ -60,7 +60,10 @@ import { MediaOffloadError } from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { augmentChatHistoryWithCliSessionImports } from "../cli-session-history.js";
 import { isSuppressedControlReplyText } from "../control-reply-text.js";
-import { resolveAgentNexusRuntimeTextReply } from "../agentnexus-tool-gateway.js";
+import {
+  extractAgentNexusRuntimeConversationText,
+  resolveAgentNexusRuntimeTextReply,
+} from "../agentnexus-tool-gateway.js";
 import {
   attachManagedOutgoingImagesToMessage,
   cleanupManagedOutgoingImageRecords,
@@ -1932,6 +1935,22 @@ function broadcastChatError(params: {
   params.context.agentRunSeq.delete(params.runId);
 }
 
+function readAgentNexusRuntimeConversationMessages(params: {
+  sessionKey: string;
+  fallbackEntry?: { sessionId?: string; sessionFile?: string };
+}): unknown[] {
+  const { storePath, entry } = loadSessionEntry(params.sessionKey);
+  const sessionId = entry?.sessionId ?? params.fallbackEntry?.sessionId;
+  if (!sessionId || !storePath) {
+    return [];
+  }
+  return readSessionMessages(
+    sessionId,
+    storePath,
+    entry?.sessionFile ?? params.fallbackEntry?.sessionFile,
+  ).slice(-8);
+}
+
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
     if (!validateChatHistoryParams(params)) {
@@ -2557,6 +2576,12 @@ export const chatHandlers: GatewayRequestHandlers = {
         text: parsedMessage,
         now: new Date(now),
         signal: activeRunAbort.controller.signal,
+        conversationText: extractAgentNexusRuntimeConversationText(
+          readAgentNexusRuntimeConversationMessages({
+            sessionKey,
+            fallbackEntry: entry,
+          }),
+        ),
       }).catch((err) => {
         context.logGateway.warn(
           `webchat AgentNexus Tool Gateway reply failed: ${formatForLog(err)}`,

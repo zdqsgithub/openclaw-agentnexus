@@ -50,6 +50,20 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(request?.args.query).toContain("FDA AI device guidance");
   });
 
+  it("maps public GitHub repository URLs to server-side public repo reads", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "Can you access this github repo https://github.com/zdqsgithub/openclaw-agentnexus?",
+    );
+
+    expect(request).toEqual({
+      tool: "github_public_repo_read",
+      intent: "github_public_repo_read",
+      args: {
+        url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+      },
+    });
+  });
+
   it("maps governed skill requests to AgentNexus runtime skill execution", () => {
     const request = resolveAgentNexusRuntimeToolRequest(
       "/skill demo-summary-style Summarize a launch note for a VC demo.",
@@ -168,7 +182,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("raw");
   });
 
-  it("formats search results with concrete source URLs", () => {
+  it("formats search results with summaries and concrete source URLs", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
         tool: "web_search",
@@ -181,8 +195,13 @@ describe("AgentNexus runtime Tool Gateway client", () => {
         body: {
           data: {
             result: {
+              answer: "FDA updated software medical device guidance.",
               citations: [
-                { url: "https://www.fda.gov/medical-devices/software-medical-device-samd" },
+                {
+                  title: "FDA software as a medical device",
+                  url: "https://www.fda.gov/medical-devices/software-medical-device-samd",
+                  snippet: "FDA explains software as a medical device policy updates.",
+                },
               ],
             },
           },
@@ -190,7 +209,77 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
+    expect(answer).toContain("Cited web search completed through AgentNexus Tool Gateway.");
+    expect(answer).toContain("1. FDA software as a medical device");
+    expect(answer).toContain("brief_summary: FDA explains software as a medical device policy updates.");
+    expect(answer).toContain("source_url: https://www.fda.gov/medical-devices/software-medical-device-samd");
     expect(answer).toContain("https://www.fda.gov/medical-devices/software-medical-device-samd");
+    expect(answer).not.toMatch(/api[_-]?key|Bearer|tvly-|brave/i);
+  });
+
+  it("formats public GitHub repo reads with README evidence and no credentials", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "github_public_repo_read",
+        intent: "github_public_repo_read",
+        args: { url: "https://github.com/zdqsgithub/openclaw-agentnexus" },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              repo: "zdqsgithub/openclaw-agentnexus",
+              description: "AgentNexus-managed OpenClaw runtime fork",
+              fileEvidence: ["README.md"],
+              readme: {
+                path: "README.md",
+                excerpt: "Runtime Tool Gateway client documentation.",
+              },
+              sourceUrls: [
+                "https://github.com/zdqsgithub/openclaw-agentnexus",
+              ],
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain("Public GitHub repo read completed through AgentNexus Tool Gateway.");
+    expect(answer).toContain("repo: zdqsgithub/openclaw-agentnexus");
+    expect(answer).toContain("README.md");
+    expect(answer).toContain("Runtime Tool Gateway client documentation.");
+    expect(answer).not.toMatch(/github_pat|ghp_|Bearer|private repo/i);
+  });
+
+  it("summarizes previous redacted Tool Gateway search results for follow-up requests", async () => {
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "summarize the news for me",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      fetchFn: vi.fn(async () => {
+        throw new Error("direct model path should not be used");
+      }) as unknown as typeof fetch,
+      conversationText: [
+        "Cited web search completed through AgentNexus Tool Gateway.",
+        "",
+        "1. California storm warning",
+        "brief_summary: Officials warned residents about a fast-moving storm.",
+        "source_url: https://example.com/california-storm",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("Summary of previous Tool Gateway search results");
+    expect(reply?.content).toContain("California storm warning");
+    expect(reply?.content).toContain("https://example.com/california-storm");
+    expect(reply?.content).not.toContain("I can't access live news");
   });
 
   it("formats governed skill results without leaking raw skill metadata", () => {
