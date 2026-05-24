@@ -282,6 +282,38 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("I can't access live news");
   });
 
+  it("prioritizes previous search result summaries over a fresh search intent", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("fresh search should not be executed for search-results follow-up");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Summarize those search results in 3 bullets and keep the source URLs.",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      conversationText: [
+        "Cited web search completed through AgentNexus Tool Gateway.",
+        "",
+        "1. California storm warning",
+        "brief_summary: Officials warned residents about a fast-moving storm.",
+        "source_url: https://example.com/california-storm",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("Summary of previous Tool Gateway search results");
+    expect(reply?.content).toContain("California storm warning");
+    expect(reply?.content).toContain("https://example.com/california-storm");
+  });
+
   it("formats governed skill results without leaking raw skill metadata", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {

@@ -149,15 +149,16 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
+  const previousSearchSummary = buildPreviousSearchSummaryReply(options.text, options.conversationText);
+  if (previousSearchSummary) {
+    return {
+      adapter: "agentnexus-tool-gateway",
+      content: previousSearchSummary,
+    };
+  }
+
   const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
   if (!request) {
-    const previousSearchSummary = buildPreviousSearchSummaryReply(options.text, options.conversationText);
-    if (previousSearchSummary) {
-      return {
-        adapter: "agentnexus-tool-gateway",
-        content: previousSearchSummary,
-      };
-    }
     const directConfig = readAgentNexusRuntimeDirectChatConfig(options.env);
     if (!directConfig) {
       return null;
