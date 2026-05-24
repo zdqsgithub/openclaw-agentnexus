@@ -93,7 +93,7 @@ export function resolveAgentNexusRuntimeToolRequest(
       intent: "google_sheets_read",
       args: {
         spreadsheetId,
-        range: "A1:Z20",
+        range: "Sheet1!A1:Z20",
         majorDimension: "ROWS",
         requestedWrite: /\b(write|edit|update|append|change|modify)\b/.test(lower),
       },

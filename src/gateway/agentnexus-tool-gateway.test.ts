@@ -51,7 +51,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       intent: "google_sheets_read",
       args: {
         spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
-        range: "A1:Z20",
+        range: "Sheet1!A1:Z20",
         majorDimension: "ROWS",
         requestedWrite: true,
       },
@@ -184,7 +184,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
         intent: "google_sheets_read",
         args: {
           spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
-          range: "A1:Z20",
+          range: "Sheet1!A1:Z20",
           requestedWrite: true,
         },
       },
@@ -198,7 +198,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
               redacted: true,
               resultType: "spreadsheet_values",
               source: "authorized Google Sheets read",
-              range: "A1:Z20",
+              range: "Sheet1!A1:Z20",
               rowCount: 3,
               columnCount: 2,
               headers: ["Metric", "Status"],
@@ -214,7 +214,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
 
     expect(answer).toContain("Google Sheets read completed through AgentNexus Tool Gateway.");
     expect(answer).toContain("source: authorized Google Sheets read");
-    expect(answer).toContain("range: A1:Z20");
+    expect(answer).toContain("range: Sheet1!A1:Z20");
     expect(answer).toContain("row_count: 3");
     expect(answer).toContain("column_count: 2");
     expect(answer).toContain("headers: Metric, Status");
