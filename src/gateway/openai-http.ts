@@ -35,6 +35,7 @@ import {
   type ConversationEntry,
 } from "./agent-prompt.js";
 import {
+  extractAgentNexusRuntimeConversationText,
   type AgentNexusRuntimeTextReply,
   resolveAgentNexusRuntimeTextReply,
 } from "./agentnexus-tool-gateway.js";
@@ -354,6 +355,7 @@ async function handleAgentNexusRuntimeToolGatewayChat(params: {
   const reply = await resolveAgentNexusRuntimeTextReply({
     text: userText,
     signal: params.signal,
+    conversationText: extractAgentNexusRuntimeConversationText(asMessages(params.payload.messages)),
   });
   if (!reply) {
     return false;

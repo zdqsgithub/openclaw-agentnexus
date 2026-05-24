@@ -1,9 +1,13 @@
-type RuntimeToolName = "web_search" | "calendar_list_events" | "runtime_skill_execute";
+type RuntimeToolName =
+  | "web_search"
+  | "calendar_list_events"
+  | "github_public_repo_read"
+  | "runtime_skill_execute";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
   args: Record<string, unknown>;
-  intent: "web_search" | "google_calendar_read" | "governed_skill";
+  intent: "web_search" | "google_calendar_read" | "github_public_repo_read" | "governed_skill";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -70,6 +74,17 @@ export function resolveAgentNexusRuntimeToolRequest(
     return governedSkill;
   }
 
+  const githubRepoUrl = extractPublicGitHubRepoUrl(normalized);
+  if (githubRepoUrl) {
+    return {
+      tool: "github_public_repo_read",
+      intent: "github_public_repo_read",
+      args: {
+        url: githubRepoUrl,
+      },
+    };
+  }
+
   if (
     /\b(gws|google workspace|google calendar|calendar)\b/.test(lower) &&
     /\b(read|list|access|event|events|upcoming)\b/.test(lower)
@@ -124,6 +139,7 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   env?: Record<string, string | undefined>;
   fetchFn?: typeof fetch;
   signal?: AbortSignal;
+  conversationText?: string;
 }): Promise<AgentNexusRuntimeTextReply | null> {
   const channelBoundaryAnswer = buildChannelPublishBoundaryAnswer(options.text);
   if (channelBoundaryAnswer) {
@@ -135,6 +151,13 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
 
   const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
   if (!request) {
+    const previousSearchSummary = buildPreviousSearchSummaryReply(options.text, options.conversationText);
+    if (previousSearchSummary) {
+      return {
+        adapter: "agentnexus-tool-gateway",
+        content: previousSearchSummary,
+      };
+    }
     const directConfig = readAgentNexusRuntimeDirectChatConfig(options.env);
     if (!directConfig) {
       return null;
@@ -321,15 +344,44 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     ].join("\n");
   }
 
-  const urls = extractCitationUrls(params.result.body);
+  if (params.request.intent === "github_public_repo_read") {
+    return formatGitHubPublicRepoReadAnswer(params.result.body);
+  }
+
+  const citationItems = extractCitationItems(params.result.body);
   return [
     "Cited web search completed through AgentNexus Tool Gateway.",
     "",
-    urls.length > 0
-      ? `source_urls:\n${urls.map((url) => `- ${url}`).join("\n")}`
+    citationItems.length > 0
+      ? citationItems.map((item, index) => [
+        `${index + 1}. ${item.title}`,
+        `brief_summary: ${item.snippet}`,
+        `source_url: ${item.url}`,
+      ].join("\n")).join("\n\n")
       : "source_urls: none returned",
     "redaction: provider credentials and server-side search keys stay in AgentNexus.",
   ].join("\n");
+}
+
+export function extractAgentNexusRuntimeConversationText(messages: unknown[]): string {
+  return messages
+    .map((message) => {
+      if (!message || typeof message !== "object" || Array.isArray(message)) {
+        return "";
+      }
+      const record = message as Record<string, unknown>;
+      const role = typeof record.role === "string" ? record.role : "message";
+      const text = typeof record.text === "string"
+        ? record.text
+        : typeof record.message === "string"
+          ? record.message
+          : extractTextFromContent(record.content);
+      return text.trim() ? `${role}: ${text.trim()}` : "";
+    })
+    .filter(Boolean)
+    .slice(-8)
+    .join("\n\n")
+    .slice(-8_000);
 }
 
 function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest | null {
@@ -376,7 +428,15 @@ function countResultItems(body: Record<string, unknown>) {
   return result === null || result === undefined ? 0 : 1;
 }
 
-function extractCitationUrls(body: Record<string, unknown>) {
+function readToolResult(body: Record<string, unknown>) {
+  const data = body.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return undefined;
+  }
+  return (data as { result?: unknown }).result;
+}
+
+function extractCitationItems(body: Record<string, unknown>) {
   const result = readToolResult(body);
   const citations = result &&
       typeof result === "object" &&
@@ -384,19 +444,146 @@ function extractCitationUrls(body: Record<string, unknown>) {
     ? (result as { citations: unknown[] }).citations
     : [];
   return citations
-    .map((citation) => citation && typeof citation === "object"
-      ? (citation as { url?: unknown }).url
-      : null)
-    .filter((url): url is string => typeof url === "string" && /^https?:\/\//.test(url))
+    .map((citation) => {
+      if (!citation || typeof citation !== "object") {
+        return null;
+      }
+      const record = citation as { title?: unknown; url?: unknown; snippet?: unknown };
+      if (typeof record.url !== "string" || !/^https?:\/\//.test(record.url)) {
+        return null;
+      }
+      return {
+        title: sanitizeOneLine(typeof record.title === "string" && record.title.trim()
+          ? record.title
+          : record.url, 160),
+        url: record.url,
+        snippet: sanitizeOneLine(typeof record.snippet === "string" && record.snippet.trim()
+          ? record.snippet
+          : "No summary returned by the search provider.", 280),
+      };
+    })
+    .filter((item): item is { title: string; url: string; snippet: string } => item !== null)
     .slice(0, 5);
 }
 
-function readToolResult(body: Record<string, unknown>) {
-  const data = body.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return undefined;
+function formatGitHubPublicRepoReadAnswer(body: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const repo = typeof record.repo === "string" ? record.repo : "unknown";
+  const description = typeof record.description === "string" && record.description.trim()
+    ? sanitizeOneLine(record.description, 280)
+    : "No repository description returned.";
+  const readme = record.readme && typeof record.readme === "object" && !Array.isArray(record.readme)
+    ? record.readme as Record<string, unknown>
+    : {};
+  const readmePath = typeof readme.path === "string" ? readme.path : "README.md";
+  const readmeExcerpt = typeof readme.excerpt === "string" && readme.excerpt.trim()
+    ? readme.excerpt.trim().slice(0, 1_200)
+    : "No README excerpt returned.";
+  const fileEvidence = Array.isArray(record.fileEvidence)
+    ? record.fileEvidence.filter((item): item is string => typeof item === "string").slice(0, 5)
+    : [];
+  return [
+    "Public GitHub repo read completed through AgentNexus Tool Gateway.",
+    "",
+    `repo: ${repo}`,
+    `description: ${description}`,
+    `file_evidence: ${fileEvidence.length ? fileEvidence.join(", ") : readmePath}`,
+    `readme_excerpt: ${readmeExcerpt}`,
+    "redaction: GitHub credentials and runtime-held GitHub tokens are not exposed.",
+  ].join("\n");
+}
+
+function buildPreviousSearchSummaryReply(text: string, conversationText: string | undefined) {
+  if (!/\b(summarize|summary|recap|what did (you|we) find|those results|the results|the news)\b/i.test(text)) {
+    return null;
   }
-  return (data as { result?: unknown }).result;
+  if (!conversationText || !/Cited web search completed through AgentNexus Tool Gateway/i.test(conversationText)) {
+    return null;
+  }
+  const previousSearch = conversationText
+    .split(/Cited web search completed through AgentNexus Tool Gateway\./i)
+    .at(-1);
+  if (!previousSearch) {
+    return null;
+  }
+  const items = extractFormattedSearchItems(previousSearch);
+  if (items.length === 0) {
+    return null;
+  }
+  return [
+    "Summary of previous Tool Gateway search results:",
+    "",
+    items.map((item, index) => `${index + 1}. ${item.title}: ${item.summary} (${item.url})`).join("\n"),
+    "",
+    "source: previous redacted AgentNexus Tool Gateway web_search result",
+  ].join("\n");
+}
+
+function extractFormattedSearchItems(text: string) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const items: Array<{ title: string; summary: string; url: string }> = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const titleMatch = lines[index]?.match(/^\d+\.\s+(.+)$/);
+    if (!titleMatch) continue;
+    const summaryLine = lines[index + 1] ?? "";
+    const urlLine = lines[index + 2] ?? "";
+    const summary = summaryLine.replace(/^brief_summary:\s*/i, "").trim();
+    const url = urlLine.replace(/^source_url:\s*/i, "").trim();
+    if (!summary || !/^https?:\/\//i.test(url)) continue;
+    items.push({
+      title: sanitizeOneLine(titleMatch[1], 160),
+      summary: sanitizeOneLine(summary, 280),
+      url,
+    });
+  }
+  return items.slice(0, 5);
+}
+
+function extractPublicGitHubRepoUrl(text: string) {
+  const match = text.match(/https:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}(?:[/?#][^\s)]*)?/i);
+  if (!match) {
+    return null;
+  }
+  try {
+    const parsed = new URL(match[0].replace(/[.,，。!?！？\])}>]+$/u, ""));
+    if (parsed.protocol !== "https:" || !["github.com", "www.github.com"].includes(parsed.hostname.toLowerCase())) {
+      return null;
+    }
+    const [owner, repo] = parsed.pathname.replace(/^\/+|\/+$/g, "").split("/");
+    if (!owner || !repo) {
+      return null;
+    }
+    return `https://github.com/${owner}/${repo}`;
+  } catch {
+    return null;
+  }
+}
+
+function extractTextFromContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object" || Array.isArray(part)) {
+        return "";
+      }
+      const text = (part as { text?: unknown; input_text?: unknown }).text ??
+        (part as { input_text?: unknown }).input_text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function sanitizeOneLine(value: string, limit: number) {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function readOpenRouterContent(body: unknown): string | null {
