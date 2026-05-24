@@ -40,6 +40,24 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
   });
 
+  it("maps Google Sheets URLs to read-only Sheets Tool Gateway calls before generic Workspace calendar handling", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "Can you access google workspace to read and write this googlesheet https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?usp=drive_link?",
+      new Date("2026-05-21T17:00:00.000Z"),
+    );
+
+    expect(request).toEqual({
+      tool: "sheets_read_range",
+      intent: "google_sheets_read",
+      args: {
+        spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+        range: "A1:Z20",
+        majorDimension: "ROWS",
+        requestedWrite: true,
+      },
+    });
+  });
+
   it("maps citation requests to server-side web search calls", () => {
     const request = resolveAgentNexusRuntimeToolRequest(
       "Search current public FDA AI device guidance and include citation URLs.",
@@ -157,6 +175,54 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("Private FDA call");
     expect(answer).not.toContain("redaction:");
     expect(answer).not.toContain("AgentNexus Tool Gateway");
+  });
+
+  it("formats Google Sheets reads with bounded preview evidence and write approval boundary", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "sheets_read_range",
+        intent: "google_sheets_read",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          range: "A1:Z20",
+          requestedWrite: true,
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              readOnly: true,
+              redacted: true,
+              resultType: "spreadsheet_values",
+              source: "authorized Google Sheets read",
+              range: "A1:Z20",
+              rowCount: 3,
+              columnCount: 2,
+              headers: ["Metric", "Status"],
+              previewRows: [
+                ["GWS read", "Pass"],
+                ["Owner", "[redacted]"],
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain("Google Sheets read completed through AgentNexus Tool Gateway.");
+    expect(answer).toContain("source: authorized Google Sheets read");
+    expect(answer).toContain("range: A1:Z20");
+    expect(answer).toContain("row_count: 3");
+    expect(answer).toContain("column_count: 2");
+    expect(answer).toContain("headers: Metric, Status");
+    expect(answer).toContain("preview:");
+    expect(answer).toContain("GWS read | Pass");
+    expect(answer).toContain("Google Sheets write was not executed. Write actions require AgentNexus approval.");
+    expect(answer).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+    expect(answer).not.toMatch(/person@example.com|access_token|refresh_token|Bearer/i);
   });
 
   it("does not stringify non-text Calendar range arguments into runtime output", () => {

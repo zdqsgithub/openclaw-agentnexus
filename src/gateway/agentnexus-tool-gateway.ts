@@ -1,5 +1,6 @@
 type RuntimeToolName =
   | "web_search"
+  | "sheets_read_range"
   | "calendar_list_events"
   | "github_public_repo_read"
   | "runtime_skill_execute";
@@ -7,7 +8,7 @@ type RuntimeToolName =
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
   args: Record<string, unknown>;
-  intent: "web_search" | "google_calendar_read" | "github_public_repo_read" | "governed_skill";
+  intent: "web_search" | "google_sheets_read" | "google_calendar_read" | "github_public_repo_read" | "governed_skill";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -81,6 +82,20 @@ export function resolveAgentNexusRuntimeToolRequest(
       intent: "github_public_repo_read",
       args: {
         url: githubRepoUrl,
+      },
+    };
+  }
+
+  const spreadsheetId = extractGoogleSheetsSpreadsheetId(normalized);
+  if (spreadsheetId && /\b(read|list|access|summarize|summary|review|inspect|sheet|sheets|spreadsheet|googlesheet|google workspace|gws|write)\b/.test(lower)) {
+    return {
+      tool: "sheets_read_range",
+      intent: "google_sheets_read",
+      args: {
+        spreadsheetId,
+        range: "A1:Z20",
+        majorDimension: "ROWS",
+        requestedWrite: /\b(write|edit|update|append|change|modify)\b/.test(lower),
       },
     };
   }
@@ -319,6 +334,10 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     ].join("\n");
   }
 
+  if (params.request.intent === "google_sheets_read") {
+    return formatGoogleSheetsReadAnswer(params.result.body, params.request.args);
+  }
+
   if (params.request.intent === "governed_skill") {
     const result = readToolResult(params.result.body);
     const record = result && typeof result === "object" && !Array.isArray(result)
@@ -497,6 +516,52 @@ function formatGitHubPublicRepoReadAnswer(body: Record<string, unknown>) {
   ].join("\n");
 }
 
+function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const range = typeof record.range === "string" && record.range.trim()
+    ? sanitizeOneLine(record.range, 120)
+    : typeof args.range === "string"
+      ? sanitizeOneLine(args.range, 120)
+      : "A1:Z20";
+  const rowCount = typeof record.rowCount === "number" ? record.rowCount : 0;
+  const columnCount = typeof record.columnCount === "number" ? record.columnCount : 0;
+  const headers = Array.isArray(record.headers)
+    ? record.headers.filter((item): item is string => typeof item === "string" && item.trim()).slice(0, 8)
+    : [];
+  const previewRows = Array.isArray(record.previewRows)
+    ? record.previewRows
+      .filter((row): row is unknown[] => Array.isArray(row))
+      .slice(0, 5)
+      .map((row) => row
+        .filter((item): item is string => typeof item === "string")
+        .slice(0, 8)
+        .map((item) => sanitizeOneLine(item, 120)))
+    : [];
+  const requestedWrite = args.requestedWrite === true;
+  return [
+    "Google Sheets read completed through AgentNexus Tool Gateway.",
+    "",
+    "source: authorized Google Sheets read",
+    `range: ${range}`,
+    `row_count: ${rowCount}`,
+    `column_count: ${columnCount}`,
+    headers.length ? `headers: ${headers.map((item) => sanitizeOneLine(item, 80)).join(", ")}` : "headers: none returned",
+    previewRows.length
+      ? [
+        "preview:",
+        ...previewRows.map((row) => `- ${row.join(" | ")}`),
+      ].join("\n")
+      : "preview: none returned",
+    requestedWrite
+      ? "Google Sheets write was not executed. Write actions require AgentNexus approval."
+      : "write_boundary: read-only runtime request; no write executed",
+    "redaction: Google OAuth tokens and raw Google payloads stay in AgentNexus.",
+  ].join("\n");
+}
+
 function buildPreviousSearchSummaryReply(text: string, conversationText: string | undefined) {
   if (!/\b(summarize|summary|recap|what did (you|we) find|those results|the results|the news)\b/i.test(text)) {
     return null;
@@ -561,6 +626,11 @@ function extractPublicGitHubRepoUrl(text: string) {
   } catch {
     return null;
   }
+}
+
+function extractGoogleSheetsSpreadsheetId(text: string) {
+  const match = text.match(/https:\/\/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})(?:[/?#][^\s)]*)?/i);
+  return match?.[1] ?? null;
 }
 
 function extractTextFromContent(content: unknown): string {
