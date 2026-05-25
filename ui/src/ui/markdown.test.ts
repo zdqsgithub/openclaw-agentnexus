@@ -1,7 +1,69 @@
 import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import { md, toSanitizedMarkdownHtml } from "./markdown.ts";
+import {
+  md,
+  toEscapedChatTextHtml,
+  toSanitizedChatMarkdownHtml,
+  toSanitizedMarkdownHtml,
+} from "./markdown.ts";
 import { renderMarkdownSidebar } from "./views/markdown-sidebar.ts";
+
+describe("chat markdown rendering", () => {
+  it("renders assistant markdown with headings, tables, lists, links, and code blocks", () => {
+    const html = toSanitizedChatMarkdownHtml(
+      [
+        "# Report",
+        "",
+        "- one",
+        "- two",
+        "",
+        "| A | B |",
+        "|---|---|",
+        "| 1 | 2 |",
+        "",
+        "[source](https://example.com)",
+        "",
+        "```ts",
+        "console.log(1)",
+        "```",
+      ].join("\n"),
+    );
+
+    expect(html).toContain("<h1>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<table");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain("<pre>");
+    expect(html).toContain("console.log(1)");
+  });
+
+  it("escapes user-authored chat text instead of rendering markdown", () => {
+    const html = toEscapedChatTextHtml("# User heading\n<script>alert(1)</script>");
+
+    expect(html).not.toContain("<h1>");
+    expect(html).not.toContain("<script");
+    expect(html).toContain("# User heading");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
+  it("blocks raw html, dangerous links, and inline images in assistant chat markdown", () => {
+    const html = toSanitizedChatMarkdownHtml(
+      [
+        "<button onclick='alert(1)'>click</button>",
+        "[unsafe](javascript:alert(1))",
+        "![inline](data:image/png;base64,iVBORw0KGgo=)",
+        "<iframe src='https://example.com'></iframe>",
+      ].join("\n"),
+    );
+
+    expect(html).not.toContain("<button");
+    expect(html).toContain("&lt;button onclick");
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("inline");
+  });
+});
 
 describe("toSanitizedMarkdownHtml", () => {
   // ── Original tests from before markdown-it migration ──

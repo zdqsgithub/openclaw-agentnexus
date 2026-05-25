@@ -529,7 +529,7 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
   const rowCount = typeof record.rowCount === "number" ? record.rowCount : 0;
   const columnCount = typeof record.columnCount === "number" ? record.columnCount : 0;
   const headers = Array.isArray(record.headers)
-    ? record.headers.filter((item): item is string => typeof item === "string" && item.trim()).slice(0, 8)
+    ? record.headers.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 8)
     : [];
   const previewRows = Array.isArray(record.previewRows)
     ? record.previewRows

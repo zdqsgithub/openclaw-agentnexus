@@ -22,6 +22,8 @@ vi.mock("../../local-storage.ts", () => ({
 }));
 
 vi.mock("../markdown.ts", () => ({
+  toEscapedChatTextHtml: (value: string) => value,
+  toSanitizedChatMarkdownHtml: (value: string) => value,
   toSanitizedMarkdownHtml: (value: string) => value,
 }));
 
