@@ -5,7 +5,11 @@ import { getSafeLocalStorage } from "../../local-storage.ts";
 import type { AssistantIdentity } from "../assistant-identity.ts";
 import type { EmbedSandboxMode } from "../embed-sandbox.ts";
 import { icons } from "../icons.ts";
-import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import {
+  toEscapedChatTextHtml,
+  toSanitizedChatMarkdownHtml,
+  toSanitizedMarkdownHtml,
+} from "../markdown.ts";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
@@ -79,6 +83,12 @@ export function formatChatTimestampForDisplay(timestamp: number): ChatTimestampD
     }),
     dateTime: date.toISOString(),
   };
+}
+
+function renderChatTextHtml(markdown: string, normalizedRole: string): string {
+  return normalizedRole === "user"
+    ? toEscapedChatTextHtml(markdown)
+    : toSanitizedChatMarkdownHtml(markdown);
 }
 
 function renderChatTimestamp(timestamp: number) {
@@ -1416,7 +1426,7 @@ function renderGroupedMessage(
                           </details>`
                         : markdown
                           ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                              ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                              ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
                             </div>`
                           : nothing}
                       ${hasToolCards
@@ -1478,7 +1488,7 @@ function renderGroupedMessage(
                 </details>`
               : markdown
                 ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                    ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                    ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
                   </div>`
                 : nothing}
             ${hasToolCards

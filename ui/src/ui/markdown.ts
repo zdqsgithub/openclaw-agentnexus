@@ -60,6 +60,11 @@ const sanitizeOptions = {
   ALLOWED_ATTR: allowedAttrs,
   ADD_DATA_URI_TAGS: ["img"],
 };
+const chatSanitizeOptions = {
+  ALLOWED_TAGS: allowedTags.filter((tag) => tag !== "img"),
+  ALLOWED_ATTR: allowedAttrs.filter((attr) => attr !== "src" && attr !== "alt"),
+  ADD_DATA_URI_TAGS: [],
+};
 
 let hooksInstalled = false;
 const MARKDOWN_CHAR_LIMIT = 140_000;
@@ -475,13 +480,35 @@ md.renderer.rules.code_block = (tokens, idx) => {
 };
 
 export function toSanitizedMarkdownHtml(markdown: string): string {
+  return renderSanitizedMarkdownHtml(markdown, sanitizeOptions, "default");
+}
+
+export function toSanitizedChatMarkdownHtml(markdown: string): string {
+  return renderSanitizedMarkdownHtml(flattenMarkdownImages(markdown), chatSanitizeOptions, "chat");
+}
+
+export function toEscapedChatTextHtml(text: string): string {
+  const input = text.trim();
+  if (!input) {
+    return "";
+  }
+  installHooks();
+  return DOMPurify.sanitize(renderEscapedPlainTextHtml(input), chatSanitizeOptions);
+}
+
+function renderSanitizedMarkdownHtml(
+  markdown: string,
+  options: typeof sanitizeOptions,
+  cachePrefix: string,
+): string {
   const input = markdown.trim();
   if (!input) {
     return "";
   }
   installHooks();
+  const cacheKey = `${cachePrefix}\0${input}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
-    const cached = getCachedMarkdown(input);
+    const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) {
       return cached;
     }
@@ -495,9 +522,9 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
     // capped code-block chrome, while still preserving whitespace for logs
     // and other structured text that commonly trips the parse guard.
     const html = renderEscapedPlainTextHtml(`${truncated.text}${suffix}`);
-    const sanitized = DOMPurify.sanitize(html, sanitizeOptions);
+    const sanitized = DOMPurify.sanitize(html, options);
     if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
-      setCachedMarkdown(input, sanitized);
+      setCachedMarkdown(cacheKey, sanitized);
     }
     return sanitized;
   }
@@ -510,13 +537,20 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
     const escaped = escapeHtml(`${truncated.text}${suffix}`);
     rendered = `<pre class="code-block">${escaped}</pre>`;
   }
-  const sanitized = DOMPurify.sanitize(rendered, sanitizeOptions);
+  const sanitized = DOMPurify.sanitize(rendered, options);
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
-    setCachedMarkdown(input, sanitized);
+    setCachedMarkdown(cacheKey, sanitized);
   }
   return sanitized;
 }
 
 function renderEscapedPlainTextHtml(value: string): string {
   return `<div class="markdown-plain-text-fallback">${escapeHtml(value.replace(/\r\n?/g, "\n"))}</div>`;
+}
+
+function flattenMarkdownImages(value: string): string {
+  return value.replace(/!\[([^\]\r\n]*)\]\((?:\\.|[^)])*\)/g, (_match, rawLabel: string) => {
+    const label = normalizeMarkdownImageLabel(rawLabel);
+    return label;
+  });
 }

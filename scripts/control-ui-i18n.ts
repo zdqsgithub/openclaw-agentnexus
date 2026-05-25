@@ -581,10 +581,12 @@ async function runProcess(
   options: RunProcessOptions = {},
 ): Promise<{ code: number; stderr: string; stdout: string }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, {
+    const invocation = prepareSpawnInvocation(executable, args);
+    const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd ?? ROOT,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
 
     let stdout = "";
@@ -611,6 +613,38 @@ async function runProcess(
       resolve({ code: code ?? 1, stderr, stdout });
     });
   });
+}
+
+function prepareSpawnInvocation(
+  executable: string,
+  args: string[],
+): { executable: string; args: string[]; windowsVerbatimArguments?: boolean } {
+  const resolvedExecutable = resolveWindowsPackageManagerExecutable(executable);
+  if (process.platform !== "win32" || !/\.(?:bat|cmd)$/i.test(resolvedExecutable)) {
+    return { executable: resolvedExecutable, args };
+  }
+  const commandLine = [resolvedExecutable, ...args].map(escapeWindowsCmdArg).join(" ");
+  return {
+    executable: process.env.ComSpec ?? "cmd.exe",
+    args: ["/d", "/s", "/c", commandLine],
+    windowsVerbatimArguments: true,
+  };
+}
+
+function resolveWindowsPackageManagerExecutable(executable: string): string {
+  if (process.platform !== "win32" || /\.(?:bat|cmd|exe)$/i.test(executable)) {
+    return executable;
+  }
+  return ["corepack", "npm", "npx", "pnpm", "yarn"].includes(executable)
+    ? `${executable}.cmd`
+    : executable;
+}
+
+function escapeWindowsCmdArg(value: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`Unsafe Windows command argument: ${JSON.stringify(value)}`);
+  }
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 async function formatGeneratedTypeScript(filePath: string, source: string): Promise<string> {
@@ -715,10 +749,12 @@ class PiRpcClient {
       "--system-prompt",
       systemPrompt,
     ];
-    const child = spawn(command.executable, args, {
+    const invocation = prepareSpawnInvocation(command.executable, args);
+    const child = spawn(invocation.executable, invocation.args, {
       cwd: ROOT,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
 
     const client = new PiRpcClient(child);
