@@ -818,7 +818,7 @@ export class OpenClawApp extends LitElement {
         }
       },
       onTranscript: (entry) => {
-        this.realtimeTalkTranscript = `${entry.role === "user" ? "You" : "OpenClaw"}: ${entry.text}`;
+        this.realtimeTalkTranscript = `${entry.role === "user" ? "You" : "AgentC Runtime"}: ${entry.text}`;
       },
     });
     this.realtimeTalkSession = session;

@@ -139,7 +139,7 @@ describe("renderQuickSettings", () => {
     );
 
     expect(container.querySelector(".qs-assistant-avatar")?.getAttribute("src")).toBe(
-      "apple-touch-icon.png",
+      "agentc-runtime-avatar.png",
     );
     expect(container.querySelector(".qs-identity-card__source")?.textContent).toContain(
       "assets/avatars/nova-portrait.png",

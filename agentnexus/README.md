@@ -1,10 +1,11 @@
-# AgentNexus OpenClaw Runtime
+# AgentC Runtime for AgentNexus
 
 This directory defines the AgentNexus-specific cloud runtime profile for the
 `zdqsgithub/openclaw-agentnexus` fork.
 
-The goal is to keep upstream OpenClaw close to source while maintaining a small,
-explicit adapter layer for AgentNexus single-tenant cloud deployment.
+The goal is to present the hosted runtime as AgentC Runtime while keeping
+upstream OpenClaw internals close to source and maintaining a small, explicit
+adapter layer for AgentNexus single-tenant cloud deployment.
 
 ## Contract
 

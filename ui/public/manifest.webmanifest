@@ -1,20 +1,20 @@
 {
-  "name": "OpenClaw Control",
-  "short_name": "OpenClaw",
-  "description": "Multi-channel AI gateway control panel",
+  "name": "AgentC Runtime Control",
+  "short_name": "AgentC",
+  "description": "AgentNexus managed runtime control panel",
   "start_url": "./",
   "display": "standalone",
   "theme_color": "#0a0a0a",
   "background_color": "#0a0a0a",
   "icons": [
     {
-      "src": "./favicon.svg",
+      "src": "./agentc-runtime-mark.png",
       "sizes": "any",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./favicon-32.png",
+      "src": "./agentc-runtime-mark.png",
       "sizes": "32x32",
       "type": "image/png"
     },

@@ -107,19 +107,19 @@ describe("sortLocaleStrings", () => {
 
 describe("agentLogoUrl", () => {
   it("keeps base-mounted control UI logo paths absolute to the mount", () => {
-    expect(agentLogoUrl("/ui")).toBe("/ui/favicon.svg");
-    expect(agentLogoUrl("/apps/openclaw/")).toBe("/apps/openclaw/favicon.svg");
+    expect(agentLogoUrl("/ui")).toBe("/ui/agentc-runtime-mark.png");
+    expect(agentLogoUrl("/apps/openclaw/")).toBe("/apps/openclaw/agentc-runtime-mark.png");
   });
 
   it("uses a route-relative fallback before basePath bootstrap finishes", () => {
-    expect(agentLogoUrl("")).toBe("favicon.svg");
+    expect(agentLogoUrl("")).toBe("agentc-runtime-mark.png");
   });
 });
 
 describe("assistantAvatarFallbackUrl", () => {
-  it("uses the bundled Molty png for assistant profile fallbacks", () => {
-    expect(assistantAvatarFallbackUrl("/ui")).toBe("/ui/apple-touch-icon.png");
-    expect(assistantAvatarFallbackUrl("")).toBe("apple-touch-icon.png");
+  it("uses the bundled AgentC avatar for assistant profile fallbacks", () => {
+    expect(assistantAvatarFallbackUrl("/ui")).toBe("/ui/agentc-runtime-avatar.png");
+    expect(assistantAvatarFallbackUrl("")).toBe("agentc-runtime-avatar.png");
   });
 });
 

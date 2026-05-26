@@ -835,7 +835,7 @@ function renderPresetsCard(props: QuickSettingsProps) {
         <div class="qs-profiles__copy">
           <div class="qs-profiles__eyebrow">Bootstrap Context</div>
           <p class="qs-profiles__intro">
-            Choose how much workspace context OpenClaw injects into each run. These profiles do not
+            Choose how much workspace context AgentC Runtime injects into each run. These profiles do not
             change your model, tools, channels, or theme.
           </p>
           ${stateBanner}

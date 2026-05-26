@@ -649,14 +649,19 @@ function escapeWindowsCmdArg(value: string): string {
 
 async function formatGeneratedTypeScript(filePath: string, source: string): Promise<string> {
   const result = await runProcess(
-    "pnpm",
-    ["exec", "oxfmt", "--stdin-filepath", path.relative(ROOT, filePath)],
+    "node",
+    [resolveOxfmtCliPath(), "--stdin-filepath", path.relative(ROOT, filePath)],
     {
       input: source,
       rejectOnFailure: true,
     },
   );
   return result.stdout;
+}
+
+function resolveOxfmtCliPath(): string {
+  const localCli = path.join(ROOT, "node_modules", "oxfmt", "bin", "oxfmt");
+  return existsSync(localCli) ? localCli : "oxfmt";
 }
 
 type PendingPrompt = {
