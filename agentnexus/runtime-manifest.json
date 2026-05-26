@@ -1,7 +1,7 @@
 {
   "id": "openclaw-agentnexus",
   "runtime": "clawbot",
-  "displayName": "AgentNexus OpenClaw Runtime",
+  "displayName": "AgentC Runtime",
   "version": 1,
   "dockerfile": "Dockerfile.agentnexus",
   "port": 18789,

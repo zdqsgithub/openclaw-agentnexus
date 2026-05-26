@@ -72,7 +72,7 @@ function waitForChatResult(params: {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error("OpenClaw tool call timed out"));
+      reject(new Error("AgentC Runtime tool call timed out"));
     }, params.timeoutMs);
     const unsubscribe = params.client.addEventListener((evt: GatewayEventFrame) => {
       if (evt.event !== "chat") {
@@ -85,11 +85,11 @@ function waitForChatResult(params: {
       if (payload.state === "final") {
         window.clearTimeout(timer);
         unsubscribe();
-        resolve(extractTextFromMessage(payload.message) || "OpenClaw finished with no text.");
+        resolve(extractTextFromMessage(payload.message) || "AgentC Runtime finished with no text.");
       } else if (payload.state === "error") {
         window.clearTimeout(timer);
         unsubscribe();
-        reject(new Error(payload.errorMessage ?? "OpenClaw tool call failed"));
+        reject(new Error(payload.errorMessage ?? "AgentC Runtime tool call failed"));
       }
     });
   });
