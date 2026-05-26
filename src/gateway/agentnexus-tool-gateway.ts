@@ -528,37 +528,11 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
       : "A1:Z20";
   const rowCount = typeof record.rowCount === "number" ? record.rowCount : 0;
   const columnCount = typeof record.columnCount === "number" ? record.columnCount : 0;
-  const headers = Array.isArray(record.headers)
-    ? record.headers.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 8)
-    : [];
-  const previewRows = Array.isArray(record.previewRows)
-    ? record.previewRows
-      .filter((row): row is unknown[] => Array.isArray(row))
-      .slice(0, 5)
-      .map((row) => row
-        .filter((item): item is string => typeof item === "string")
-        .slice(0, 8)
-        .map((item) => sanitizeOneLine(item, 120)))
-    : [];
-  const requestedWrite = args.requestedWrite === true;
   return [
-    "Google Sheets read completed through AgentNexus Tool Gateway.",
-    "",
     "source: authorized Google Sheets read",
     `range: ${range}`,
-    `row_count: ${rowCount}`,
-    `column_count: ${columnCount}`,
-    headers.length ? `headers: ${headers.map((item) => sanitizeOneLine(item, 80)).join(", ")}` : "headers: none returned",
-    previewRows.length
-      ? [
-        "preview:",
-        ...previewRows.map((row) => `- ${row.join(" | ")}`),
-      ].join("\n")
-      : "preview: none returned",
-    requestedWrite
-      ? "Google Sheets write was not executed. Write actions require AgentNexus approval."
-      : "write_boundary: read-only runtime request; no write executed",
-    "redaction: Google OAuth tokens and raw Google payloads stay in AgentNexus.",
+    `rowCount: ${rowCount}`,
+    `columnCount: ${columnCount}`,
   ].join("\n");
 }
 
