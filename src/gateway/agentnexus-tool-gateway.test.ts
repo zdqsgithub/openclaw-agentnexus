@@ -177,7 +177,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("AgentNexus Tool Gateway");
   });
 
-  it("formats Google Sheets reads with bounded preview evidence and write approval boundary", () => {
+  it("formats Google Sheets reads as strict redacted metadata only", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
         tool: "sheets_read_range",
@@ -212,15 +212,20 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
-    expect(answer).toContain("Google Sheets read completed through AgentNexus Tool Gateway.");
-    expect(answer).toContain("source: authorized Google Sheets read");
-    expect(answer).toContain("range: Sheet1!A1:Z20");
-    expect(answer).toContain("row_count: 3");
-    expect(answer).toContain("column_count: 2");
-    expect(answer).toContain("headers: Metric, Status");
-    expect(answer).toContain("preview:");
-    expect(answer).toContain("GWS read | Pass");
-    expect(answer).toContain("Google Sheets write was not executed. Write actions require AgentNexus approval.");
+    expect(answer).toBe([
+      "source: authorized Google Sheets read",
+      "range: Sheet1!A1:Z20",
+      "rowCount: 3",
+      "columnCount: 2",
+    ].join("\n"));
+    expect(answer).not.toContain("Google Sheets read completed through AgentNexus Tool Gateway.");
+    expect(answer).not.toContain("row_count");
+    expect(answer).not.toContain("column_count");
+    expect(answer).not.toContain("headers:");
+    expect(answer).not.toContain("preview:");
+    expect(answer).not.toContain("GWS read | Pass");
+    expect(answer).not.toContain("Google Sheets write was not executed.");
+    expect(answer).not.toContain("redaction:");
     expect(answer).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
     expect(answer).not.toMatch(/person@example.com|access_token|refresh_token|Bearer/i);
   });
