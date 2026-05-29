@@ -3,12 +3,19 @@ type RuntimeToolName =
   | "sheets_read_range"
   | "calendar_list_events"
   | "github_public_repo_read"
-  | "runtime_skill_execute";
+  | "runtime_skill_execute"
+  | "runtime_cron_request";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
   args: Record<string, unknown>;
-  intent: "web_search" | "google_sheets_read" | "google_calendar_read" | "github_public_repo_read" | "governed_skill";
+  intent:
+    | "web_search"
+    | "google_sheets_read"
+    | "google_calendar_read"
+    | "github_public_repo_read"
+    | "governed_skill"
+    | "runtime_cron_request";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -73,6 +80,10 @@ export function resolveAgentNexusRuntimeToolRequest(
   const governedSkill = parseGovernedSkillRequest(normalized);
   if (governedSkill) {
     return governedSkill;
+  }
+  const governedCron = parseGovernedCronRequest(normalized);
+  if (governedCron) {
+    return governedCron;
   }
 
   const githubRepoUrl = extractPublicGitHubRepoUrl(normalized);
@@ -376,6 +387,10 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     return formatGitHubPublicRepoReadAnswer(params.result.body);
   }
 
+  if (params.request.intent === "runtime_cron_request") {
+    return formatRuntimeCronRequestAnswer(params.result.body, params.request.args);
+  }
+
   const citationItems = extractCitationItems(params.result.body);
   return [
     "Cited web search completed through AgentNexus Tool Gateway.",
@@ -438,6 +453,64 @@ function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest |
   }
 
   return null;
+}
+
+function parseGovernedCronRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const lower = text.toLowerCase();
+  const mentionsCron = /\b(cron|scheduled|schedule|monitoring|recurring)\b/.test(lower);
+  const asksToCreate = /\b(create|set up|setup|preview|request|schedule)\b/.test(lower);
+  if (!mentionsCron || !asksToCreate) {
+    return null;
+  }
+
+  const scheduleKind = /\b(web_search|search|tool gateway|read-only|read only)\b/.test(lower)
+    ? "tool_gateway_read"
+    : "scheduled_prompt";
+  const cronExpression = "0 15 * * 1";
+  const timezone = "UTC";
+  const retryLimit = readBoundedIntegerAfter(lower, /retry limit\s+(\d+)/i, 1, 0, 3);
+  const costCapCents = readBoundedIntegerAfter(lower, /cost cap\s+(\d+)/i, 25, 1, 500);
+
+  if (scheduleKind === "tool_gateway_read") {
+    return {
+      tool: "runtime_cron_request",
+      intent: "runtime_cron_request",
+      args: {
+        scheduleKind,
+        toolId: "web_search",
+        actionId: "web_search",
+        cronExpression,
+        timezone,
+        costCapCents,
+        retryLimit,
+      },
+    };
+  }
+
+  return {
+    tool: "runtime_cron_request",
+    intent: "runtime_cron_request",
+    args: {
+      scheduleKind,
+      cronExpression,
+      timezone,
+      costCapCents,
+      retryLimit,
+      prompt: text.slice(0, 1_000),
+    },
+  };
+}
+
+function readBoundedIntegerAfter(
+  text: string,
+  pattern: RegExp,
+  fallback: number,
+  min: number,
+  max: number,
+) {
+  const match = text.match(pattern);
+  const value = match?.[1] ? Number.parseInt(match[1], 10) : Number.NaN;
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
 function countResultItems(body: Record<string, unknown>) {
@@ -541,6 +614,49 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
     `range: ${range}`,
     `rowCount: ${rowCount}`,
     `columnCount: ${columnCount}`,
+  ].join("\n");
+}
+
+function formatRuntimeCronRequestAnswer(body: Record<string, unknown>, args: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const id = typeof record.id === "string" ? record.id : "unknown";
+  const status = typeof record.status === "string" ? record.status : "requested";
+  const scheduleKind = typeof record.scheduleKind === "string"
+    ? record.scheduleKind
+    : typeof args.scheduleKind === "string"
+      ? args.scheduleKind
+      : "scheduled_prompt";
+  const timezone = typeof record.timezone === "string"
+    ? record.timezone
+    : typeof args.timezone === "string"
+      ? args.timezone
+      : "UTC";
+  const retryLimit = typeof record.retryLimit === "number"
+    ? record.retryLimit
+    : typeof args.retryLimit === "number"
+      ? args.retryLimit
+      : 1;
+  const costCapCents = typeof record.costCapCents === "number"
+    ? record.costCapCents
+    : typeof args.costCapCents === "number"
+      ? args.costCapCents
+      : 25;
+  const requiresApproval = typeof record.requiresApproval === "boolean" ? record.requiresApproval : true;
+  return [
+    "Runtime cron request created through AgentNexus Tool Gateway.",
+    "tool: runtime_cron_request",
+    `cron_job_id: ${id}`,
+    `status: ${status}`,
+    `schedule_kind: ${scheduleKind}`,
+    `approval_required: ${requiresApproval}`,
+    `timezone: ${timezone}`,
+    `retry_limit: ${retryLimit}`,
+    `cost_cap_cents: ${costCapCents}`,
+    "safety_boundary: no cron shell, no cron browser, no Google write, no channel publish, no production secrets",
+    "source: AgentNexus governed runtime cron",
   ].join("\n");
 }
 
