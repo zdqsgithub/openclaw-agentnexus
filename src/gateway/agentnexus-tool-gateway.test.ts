@@ -306,7 +306,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
               fileEvidence: ["README.md"],
               readme: {
                 path: "README.md",
-                excerpt: "Runtime Tool Gateway client documentation.",
+                excerpt: "<h3>Runtime Tool Gateway client documentation.</h3><p>Do not execute repo code.</p>",
               },
               sourceUrls: [
                 "https://github.com/zdqsgithub/openclaw-agentnexus",
@@ -322,6 +322,8 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).toContain("repo: zdqsgithub/openclaw-agentnexus");
     expect(answer).toContain("README.md");
     expect(answer).toContain("Runtime Tool Gateway client documentation.");
+    expect(answer).not.toContain("<h3>");
+    expect(answer).not.toContain("</p>");
     expect(answer).not.toMatch(/github_pat|ghp_|Bearer|private repo/i);
   });
 
@@ -430,6 +432,50 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).toContain("https://example.com/tool-gateway-control");
     expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway web_search result");
     expect(reply?.content).not.toMatch(/can't browse|cannot browse|api[_-]?key|Bearer/i);
+  });
+
+  it("turns previous redacted GitHub repo evidence into a structured implementation plan", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("fresh model or tool request should not be executed for repo-plan follow-up");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Create a concise Markdown implementation plan from native GitHub repo evidence.",
+        "Include exactly these headings: Implementation plan from native GitHub repo evidence, Repo summary, Key files, Implementation steps, Demo takeaway.",
+        "Do not say you cannot access GitHub. Do not execute repo code.",
+      ].join(" "),
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      conversationText: [
+        "Public GitHub repo read completed through AgentNexus Tool Gateway.",
+        "",
+        "repo: ClawBio/ClawBio",
+        "description: The first bioinformatics-native AI agent skill library.",
+        "file_evidence: README.md, skills/README.md",
+        "readme_excerpt: ClawBio is a bioinformatics-native AI agent skill library built on OpenClaw.",
+        "redaction: GitHub credentials and runtime-held GitHub tokens are not exposed.",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("# Implementation plan from native GitHub repo evidence");
+    expect(reply?.content).toContain("## Repo summary");
+    expect(reply?.content).toContain("## Key files");
+    expect(reply?.content).toContain("## Implementation steps");
+    expect(reply?.content).toContain("## Demo takeaway");
+    expect(reply?.content).toContain("ClawBio/ClawBio");
+    expect(reply?.content).toContain("README.md");
+    expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway github_public_repo_read result");
+    expect(reply?.content).not.toMatch(/cannot access GitHub|can't access GitHub|github_pat|ghp_|Bearer|private repo/i);
   });
 
   it("formats governed skill results without leaking raw skill metadata", () => {
