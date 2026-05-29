@@ -172,6 +172,14 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
+  const previousGitHubRepoPlan = buildPreviousGitHubRepoPlanReply(options.text, options.conversationText);
+  if (previousGitHubRepoPlan) {
+    return {
+      adapter: "agentnexus-tool-gateway",
+      content: previousGitHubRepoPlan,
+    };
+  }
+
   const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
   if (!request) {
     const directConfig = readAgentNexusRuntimeDirectChatConfig(options.env);
@@ -500,7 +508,7 @@ function formatGitHubPublicRepoReadAnswer(body: Record<string, unknown>) {
     : {};
   const readmePath = typeof readme.path === "string" ? readme.path : "README.md";
   const readmeExcerpt = typeof readme.excerpt === "string" && readme.excerpt.trim()
-    ? readme.excerpt.trim().slice(0, 1_200)
+    ? sanitizeRepoEvidenceText(readme.excerpt, 1_200)
     : "No README excerpt returned.";
   const fileEvidence = Array.isArray(record.fileEvidence)
     ? record.fileEvidence.filter((item): item is string => typeof item === "string").slice(0, 5)
@@ -534,6 +542,88 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
     `rowCount: ${rowCount}`,
     `columnCount: ${columnCount}`,
   ].join("\n");
+}
+
+function buildPreviousGitHubRepoPlanReply(text: string, conversationText: string | undefined) {
+  if (!/\b(implementation plan|repo summary|key files|demo takeaway|plan)\b/i.test(text)) {
+    return null;
+  }
+  if (!conversationText || !/Public GitHub repo read completed through AgentNexus Tool Gateway/i.test(conversationText)) {
+    return null;
+  }
+  const previousRepoRead = conversationText
+    .split(/Public GitHub repo read completed through AgentNexus Tool Gateway\./i)
+    .at(-1);
+  if (!previousRepoRead) {
+    return null;
+  }
+  const repoEvidence = extractFormattedGitHubRepoEvidence(previousRepoRead);
+  if (!repoEvidence) {
+    return null;
+  }
+  return formatPreviousGitHubRepoImplementationPlan(repoEvidence);
+}
+
+function formatPreviousGitHubRepoImplementationPlan(evidence: {
+  repo: string;
+  description: string;
+  fileEvidence: string[];
+  readmeExcerpt: string;
+}) {
+  const keyFiles = evidence.fileEvidence.length ? evidence.fileEvidence : ["README.md"];
+  return [
+    "# Implementation plan from native GitHub repo evidence",
+    "",
+    "## Repo summary",
+    "",
+    `- Repo: ${evidence.repo}`,
+    `- Description: ${evidence.description}`,
+    `- README signal: ${evidence.readmeExcerpt}`,
+    "",
+    "## Key files",
+    "",
+    ...keyFiles.map((file) => `- ${file}`),
+    "",
+    "## Implementation steps",
+    "",
+    "- Review README.md and listed file evidence to identify the primary package surface.",
+    "- Map the visible setup, examples, and command surfaces into an AgentC task plan.",
+    "- Keep execution disabled in this repo-read workflow; use the evidence to draft changes before any separate approval or sandbox run.",
+    "- Record repo, file evidence, and redaction status in AgentNexus evidence before demo or handoff.",
+    "",
+    "## Demo takeaway",
+    "",
+    "- AgentC turned public GitHub evidence into an implementation plan inside the native runtime console.",
+    "- GitHub credentials, non-public repository access, and raw provider payloads stayed outside the runtime.",
+    "",
+    "source: previous redacted AgentNexus Tool Gateway github_public_repo_read result",
+  ].join("\n");
+}
+
+function extractFormattedGitHubRepoEvidence(text: string) {
+  const repo = readPrefixedValue(text, "repo");
+  const description = readPrefixedValue(text, "description");
+  const fileEvidenceText = readPrefixedValue(text, "file_evidence");
+  const readmeExcerpt = readPrefixedValue(text, "readme_excerpt");
+  if (!repo || !readmeExcerpt) {
+    return null;
+  }
+  const fileEvidence = (fileEvidenceText || "README.md")
+    .split(",")
+    .map((item) => sanitizeRepoEvidenceText(item, 120))
+    .filter(Boolean)
+    .slice(0, 6);
+  return {
+    repo: sanitizeRepoEvidenceText(repo, 160),
+    description: description ? sanitizeRepoEvidenceText(description, 280) : "No repository description returned.",
+    fileEvidence,
+    readmeExcerpt: sanitizeRepoEvidenceText(readmeExcerpt, 360),
+  };
+}
+
+function readPrefixedValue(text: string, key: string) {
+  const match = text.match(new RegExp(`^${key}:\\s*(.+)$`, "im"));
+  return match?.[1]?.trim() || "";
 }
 
 function buildPreviousSearchSummaryReply(text: string, conversationText: string | undefined) {
@@ -658,6 +748,20 @@ function extractTextFromContent(content: unknown): string {
 
 function sanitizeOneLine(value: string, limit: number) {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function sanitizeRepoEvidenceText(value: string, limit: number) {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/&nbsp;/giu, " ")
+    .replace(/&amp;/giu, "&")
+    .replace(/&lt;/giu, "<")
+    .replace(/&gt;/giu, ">")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
 }
 
 function sanitizeMarkdownTableCell(value: string) {
