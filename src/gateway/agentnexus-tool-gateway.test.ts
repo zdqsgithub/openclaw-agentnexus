@@ -97,6 +97,26 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
   });
 
+  it("maps scheduled monitoring cron requests to governed runtime cron requests", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "Create a governed scheduled monitoring cron workflow. Use runtime_cron_request for a read-only web_search every Monday at 15:00 UTC with retry limit 1 and cost cap 25 cents.",
+    );
+
+    expect(request).toEqual({
+      tool: "runtime_cron_request",
+      intent: "runtime_cron_request",
+      args: {
+        scheduleKind: "tool_gateway_read",
+        toolId: "web_search",
+        actionId: "web_search",
+        cronExpression: "0 15 * * 1",
+        timezone: "UTC",
+        costCapCents: 25,
+        retryLimit: 1,
+      },
+    });
+  });
+
   it("keeps channel publish setup in the AgentNexus governed Publish path", () => {
     const answer = buildChannelPublishBoundaryAnswer(
       "I want to set up Slack or Telegram channel access.",
@@ -517,6 +537,57 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("private raw input");
     expect(answer).not.toContain("manifestHash");
     expect(answer).not.toContain("Bearer");
+  });
+
+  it("formats governed runtime cron request results with approval and safety boundaries", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "runtime_cron_request",
+        intent: "runtime_cron_request",
+        args: {
+          scheduleKind: "tool_gateway_read",
+          toolId: "web_search",
+          actionId: "web_search",
+          cronExpression: "0 15 * * 1",
+          timezone: "UTC",
+          costCapCents: 25,
+          retryLimit: 1,
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              id: "runtime-cron-1",
+              status: "requested",
+              scheduleKind: "tool_gateway_read",
+              timezone: "UTC",
+              costCapCents: 25,
+              retryLimit: 1,
+              requiresApproval: true,
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toBe([
+      "Runtime cron request created through AgentNexus Tool Gateway.",
+      "tool: runtime_cron_request",
+      "cron_job_id: runtime-cron-1",
+      "status: requested",
+      "schedule_kind: tool_gateway_read",
+      "approval_required: true",
+      "timezone: UTC",
+      "retry_limit: 1",
+      "cost_cap_cents: 25",
+      "safety_boundary: no cron shell, no cron browser, no Google write, no channel publish, no production secrets",
+      "source: AgentNexus governed runtime cron",
+    ].join("\n"));
+    expect(answer).not.toMatch(/Bearer|OPENROUTER_API_KEY|OAuth|ya29\.|sk-[A-Za-z0-9._-]+/i);
   });
 
   it("resolves runtime text replies through the same Tool Gateway path used by native chat", async () => {
