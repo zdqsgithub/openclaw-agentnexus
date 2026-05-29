@@ -306,7 +306,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
               fileEvidence: ["README.md"],
               readme: {
                 path: "README.md",
-                excerpt: "<h3>Runtime Tool Gateway client documentation.</h3><p>Do not execute repo code.</p>",
+                excerpt: "<h3>Runtime Tool Gateway client documentation.</h3><p>Do not execute repo code.</p><img src=\"https://img.shields.io/badge/demo",
               },
               sourceUrls: [
                 "https://github.com/zdqsgithub/openclaw-agentnexus",
@@ -324,6 +324,8 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).toContain("Runtime Tool Gateway client documentation.");
     expect(answer).not.toContain("<h3>");
     expect(answer).not.toContain("</p>");
+    expect(answer).not.toContain("<img");
+    expect(answer).not.toContain("img.shields.io");
     expect(answer).not.toMatch(/github_pat|ghp_|Bearer|private repo/i);
   });
 

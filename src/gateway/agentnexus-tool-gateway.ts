@@ -755,6 +755,7 @@ function sanitizeRepoEvidenceText(value: string, limit: number) {
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
     .replace(/<[^>]+>/gu, " ")
+    .replace(/<\s*\/?\s*[a-z][^>\r\n]*/giu, " ")
     .replace(/&nbsp;/giu, " ")
     .replace(/&amp;/giu, "&")
     .replace(/&lt;/giu, "<")
