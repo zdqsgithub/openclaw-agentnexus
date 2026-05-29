@@ -553,10 +553,39 @@ function buildPreviousSearchSummaryReply(text: string, conversationText: string 
   if (items.length === 0) {
     return null;
   }
+  if (/\b(research brief|brief|report|source table|demo takeaway)\b/i.test(text)) {
+    return formatPreviousSearchResearchBrief(items);
+  }
   return [
     "Summary of previous Tool Gateway search results:",
     "",
     items.map((item, index) => `${index + 1}. ${item.title}: ${item.summary} (${item.url})`).join("\n"),
+    "",
+    "source: previous redacted AgentNexus Tool Gateway web_search result",
+  ].join("\n");
+}
+
+function formatPreviousSearchResearchBrief(items: Array<{ title: string; summary: string; url: string }>) {
+  const sourceRows = items.map((item) =>
+    `| ${sanitizeMarkdownTableCell(item.title)} | ${sanitizeMarkdownTableCell(item.summary)} | ${item.url} |`
+  );
+  return [
+    "# Research brief from native Tool Gateway results",
+    "",
+    "## Executive summary",
+    "",
+    ...items.slice(0, 3).map((item) => `- ${item.title}: ${item.summary}`),
+    "",
+    "## Source table",
+    "",
+    "| Source | Brief summary | URL |",
+    "| --- | --- | --- |",
+    ...sourceRows,
+    "",
+    "## Demo takeaway",
+    "",
+    "- AgentC used prior native Tool Gateway search results to produce this brief inside the runtime console.",
+    "- Provider credentials and raw search payloads stayed server-side in AgentNexus.",
     "",
     "source: previous redacted AgentNexus Tool Gateway web_search result",
   ].join("\n");
@@ -629,6 +658,10 @@ function extractTextFromContent(content: unknown): string {
 
 function sanitizeOneLine(value: string, limit: number) {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function sanitizeMarkdownTableCell(value: string) {
+  return value.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
 }
 
 function readOpenRouterContent(body: unknown): string | null {

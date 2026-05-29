@@ -385,6 +385,53 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).toContain("https://example.com/california-storm");
   });
 
+  it("turns previous redacted Tool Gateway search results into a structured research brief", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("fresh search should not be executed for research-brief follow-up");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Create a concise Markdown research brief from native Tool Gateway results.",
+        "Include exactly these headings: Research brief from native Tool Gateway results, Executive summary, Source table, Demo takeaway.",
+        "Do not say you cannot browse.",
+      ].join(" "),
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      conversationText: [
+        "Cited web search completed through AgentNexus Tool Gateway.",
+        "",
+        "1. AI agent runtime governance guide",
+        "brief_summary: A public guide explains lease, audit, and policy controls for agent runtimes.",
+        "source_url: https://example.com/runtime-governance",
+        "",
+        "2. Tool gateway control plane",
+        "brief_summary: A product article describes server-side tool mediation and redacted evidence.",
+        "source_url: https://example.com/tool-gateway-control",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("# Research brief from native Tool Gateway results");
+    expect(reply?.content).toContain("## Executive summary");
+    expect(reply?.content).toContain("## Source table");
+    expect(reply?.content).toContain("## Demo takeaway");
+    expect(reply?.content).toContain("| Source | Brief summary | URL |");
+    expect(reply?.content).toContain("AI agent runtime governance guide");
+    expect(reply?.content).toContain("https://example.com/runtime-governance");
+    expect(reply?.content).toContain("https://example.com/tool-gateway-control");
+    expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway web_search result");
+    expect(reply?.content).not.toMatch(/can't browse|cannot browse|api[_-]?key|Bearer/i);
+  });
+
   it("formats governed skill results without leaking raw skill metadata", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
