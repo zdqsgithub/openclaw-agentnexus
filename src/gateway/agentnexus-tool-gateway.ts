@@ -757,20 +757,21 @@ function formatRuntimeRiskDisclosureBlock(disclosure: AgentNexusRuntimeRiskDiscl
     return null;
   }
   return [
-    "Native tool risk disclosure",
-    ...(disclosure.riskTier ? [`risk_tier: ${disclosure.riskTier}`] : []),
-    ...(disclosure.warningMode ? [`warning_mode: ${disclosure.warningMode}`] : []),
+    "### Native tool risk disclosure",
+    "",
+    ...(disclosure.riskTier ? [`- **Risk tier (\`risk_tier\`):** ${formatRiskDisclosureValue(disclosure.riskTier)}`] : []),
+    ...(disclosure.warningMode ? [`- **Warning mode (\`warning_mode\`):** ${formatRiskDisclosureValue(disclosure.warningMode)}`] : []),
     ...(disclosure.acknowledgementSurface
-      ? [`acknowledgement_surface: ${disclosure.acknowledgementSurface}`]
+      ? [`- **Acknowledgement surface (\`acknowledgement_surface\`):** ${formatRiskDisclosureValue(disclosure.acknowledgementSurface)}`]
       : []),
     ...(typeof disclosure.userAcknowledgementRequired === "boolean"
-      ? [`user_acknowledgement_required: ${disclosure.userAcknowledgementRequired}`]
+      ? [`- **User acknowledgement required (\`user_acknowledgement_required\`):** ${disclosure.userAcknowledgementRequired}`]
       : []),
     ...(disclosure.riskFeeBillingState
-      ? [`risk_fee_billing_state: ${disclosure.riskFeeBillingState}`]
+      ? [`- **Risk fee state (\`risk_fee_billing_state\`):** ${formatRiskDisclosureValue(disclosure.riskFeeBillingState)}`]
       : []),
-    `disclaimer: ${formatRiskDisclosureDisclaimer(disclosure.disclaimer)}`,
-    `hard_block_after_acknowledgement: ${disclosure.hardBlockAfterAcknowledgement === true}`,
+    `- **Disclaimer:** ${formatRiskDisclosureDisclaimer(disclosure.disclaimer)}`,
+    `- **Hard block after acknowledgement (\`hard_block_after_acknowledgement\`):** ${disclosure.hardBlockAfterAcknowledgement === true}`,
   ].join("\n");
 }
 
@@ -802,15 +803,17 @@ function formatRuntimeAcknowledgementPrompt(
 ) {
   const riskBlock = formatRuntimeRiskDisclosureBlock(disclosure);
   return [
-    "Native tool acknowledgement required",
+    "## Native tool acknowledgement required",
+    "",
+    "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk. Eligible actions use warn-then-execute; unauthorized, secret-leaking, abusive, unauditable, or destructive actions remain blocked.",
     ...(riskBlock ? ["", riskBlock] : []),
     "",
-    `action: ${request.tool}`,
-    `intent: ${request.intent}`,
-    "execution_status: waiting_for_user_acknowledgement",
-    "acknowledgement_effect: action will run after explicit acknowledgement; no hidden block is applied",
+    `- **Action:** \`${request.tool}\``,
+    `- **Intent:** \`${request.intent}\``,
+    "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+    "- **Acknowledgement effect:** action will run after explicit acknowledgement; no hidden block is applied",
     "",
-    `To continue, reply: I acknowledge AgentC native risk and run ${request.tool}`,
+    `**To continue, reply:** \`I acknowledge AgentC native risk and run ${request.tool}\``,
   ].join("\n");
 }
 
@@ -822,6 +825,19 @@ function formatRiskDisclosureDisclaimer(value: string | undefined) {
     return value;
   }
   return "governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage";
+}
+
+function formatRiskDisclosureValue(value: string) {
+  if (value === "configured_not_charged") {
+    return "configured, not charged";
+  }
+  if (value === "warn_then_execute_when_eligible") {
+    return "warn then execute when eligible";
+  }
+  if (value === "agentnexus_control_plane_or_runtime_prompt") {
+    return "AgentNexus control plane or runtime prompt";
+  }
+  return value.replace(/_/g, " ");
 }
 
 function withRiskDisclosurePrefix(prefix: string | null, answer: string) {
