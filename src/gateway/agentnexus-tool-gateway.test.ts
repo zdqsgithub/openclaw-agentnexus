@@ -117,6 +117,33 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
   });
 
+  it("maps explicit channel publish preview requests to AgentNexus Tool Gateway", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      [
+        "Create a governed channel relay notification preview through AgentNexus Tool Gateway.",
+        "Use channel_publish_preview.",
+        "Channel type webhook.",
+        "Draft title: AgentC governed channel relay QA.",
+        "Draft body: Redacted synthetic channel relay notification.",
+        "Draft summary: Synthetic AgentC channel relay notification.",
+        "Do not send the webhook from the runtime.",
+      ].join(" "),
+    );
+
+    expect(request).toEqual({
+      tool: "channel_publish_preview",
+      intent: "channel_publish_preview",
+      args: {
+        channelType: "webhook",
+        draft: {
+          title: "AgentC governed channel relay QA",
+          body: "Redacted synthetic channel relay notification",
+          summary: "Synthetic AgentC channel relay notification",
+        },
+      },
+    });
+  });
+
   it("keeps channel publish setup in the AgentNexus governed Publish path", () => {
     const answer = buildChannelPublishBoundaryAnswer(
       "I want to set up Slack or Telegram channel access.",
@@ -160,6 +187,65 @@ describe("AgentNexus runtime Tool Gateway client", () => {
         }),
       }),
     );
+  });
+
+  it("formats channel publish previews with approval and redacted target evidence", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "channel_publish_preview",
+        intent: "channel_publish_preview",
+        args: {
+          channelType: "webhook",
+          draft: {
+            title: "AgentC governed channel relay QA",
+            body: "Private payload must stay redacted.",
+            summary: "Synthetic channel relay notification.",
+          },
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              provider: "channel_publish",
+              actionId: "webhook_send",
+              channelType: "webhook",
+              requiresApproval: true,
+              riskLabel: "approval_required",
+              riskReason: "Channel Publish webhook delivery requires explicit approval.",
+              redactedDraft: {
+                bodyLength: 35,
+                bodyPreview: "[redacted]",
+                hasBody: true,
+                payloadKeys: ["body", "summary", "title"],
+                redacted: true,
+              },
+              target: {
+                hostHash: "abc123hosthash",
+                redacted: true,
+              },
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toBe([
+      "Channel Publish preview created through AgentNexus Tool Gateway.",
+      "tool: channel_publish_preview",
+      "channel_type: webhook",
+      "requires_approval: true",
+      "risk_label: approval_required",
+      "target_host_hash: abc123hosthash",
+      "redacted_draft: bodyPreview=[redacted], payloadKeys=body, summary, title",
+      "safety_boundary: preview only from runtime; delivery requires AgentNexus approval; no Slack, Discord, Telegram, webhook URL, signing secret, or channel secret is exposed",
+      "source: AgentNexus Channel Publish webhook pilot",
+    ].join("\n"));
+    expect(answer).not.toContain("Private payload");
+    expect(answer).not.toMatch(/https:\/\/webhook\.site|signing_secret|SLACK_BOT_TOKEN|discord\.com\/api\/webhooks|api\.telegram\.org|Bearer/i);
   });
 
   it("formats Google Workspace results without raw event data", () => {
