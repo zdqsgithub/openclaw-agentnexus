@@ -243,16 +243,25 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
+  const riskDisclosure = await fetchAgentNexusRuntimeRiskDisclosure({
+    config,
+    request,
+    fetchFn: options.fetchFn,
+    signal: options.signal,
+  });
+
+  if (requiresRuntimeAcknowledgement(riskDisclosure) && !hasRuntimeRiskAcknowledgement(options.text)) {
+    return {
+      adapter: "agentnexus-tool-gateway",
+      content: formatRuntimeAcknowledgementPrompt(request, riskDisclosure),
+    };
+  }
+
   return {
     adapter: "agentnexus-tool-gateway",
     content: formatAgentNexusRuntimeToolAnswer({
       request,
-      riskDisclosure: await fetchAgentNexusRuntimeRiskDisclosure({
-        config,
-        request,
-        fetchFn: options.fetchFn,
-        signal: options.signal,
-      }),
+      riskDisclosure,
       result: await executeAgentNexusRuntimeTool({
         config,
         request,
@@ -536,8 +545,9 @@ function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest |
 
 function parseGovernedCronRequest(text: string): AgentNexusRuntimeToolRequest | null {
   const lower = text.toLowerCase();
-  const mentionsCron = /\b(cron|scheduled|schedule|monitoring|recurring)\b/.test(lower);
-  const asksToCreate = /\b(create|set up|setup|preview|request|schedule)\b/.test(lower);
+  const mentionsCron = lower.includes("runtime_cron_request") ||
+    /\b(cron|scheduled|schedule|monitoring|recurring)\b/.test(lower);
+  const asksToCreate = /\b(create|set up|setup|preview|request|schedule|run|execute|continue|acknowledge|confirm|proceed)\b/.test(lower);
   if (!mentionsCron || !asksToCreate) {
     return null;
   }
@@ -757,6 +767,34 @@ function formatRuntimeRiskDisclosureBlock(disclosure: AgentNexusRuntimeRiskDiscl
       : []),
     `disclaimer: ${formatRiskDisclosureDisclaimer(disclosure.disclaimer)}`,
     `hard_block_after_acknowledgement: ${disclosure.hardBlockAfterAcknowledgement === true}`,
+  ].join("\n");
+}
+
+function requiresRuntimeAcknowledgement(disclosure: AgentNexusRuntimeRiskDisclosure | null | undefined) {
+  return disclosure?.userAcknowledgementRequired === true;
+}
+
+function hasRuntimeRiskAcknowledgement(text: string) {
+  const lower = text.toLowerCase();
+  return /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(lower) &&
+    /\b(agentc native risk|native risk|risk disclosure|tool risk|runtime_cron_request)\b/.test(lower);
+}
+
+function formatRuntimeAcknowledgementPrompt(
+  request: AgentNexusRuntimeToolRequest,
+  disclosure: AgentNexusRuntimeRiskDisclosure | null | undefined,
+) {
+  const riskBlock = formatRuntimeRiskDisclosureBlock(disclosure);
+  return [
+    "Native tool acknowledgement required",
+    ...(riskBlock ? ["", riskBlock] : []),
+    "",
+    `action: ${request.tool}`,
+    `intent: ${request.intent}`,
+    "execution_status: waiting_for_user_acknowledgement",
+    "acknowledgement_effect: action will run after explicit acknowledgement; no hidden block is applied",
+    "",
+    `To continue, reply: I acknowledge AgentC native risk and run ${request.tool}`,
   ].join("\n");
 }
 

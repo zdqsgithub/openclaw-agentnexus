@@ -268,7 +268,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
 
     const reply = await resolveAgentNexusRuntimeTextReply({
       text:
-        "Create a governed scheduled monitoring cron workflow. Use runtime_cron_request for a read-only web_search every Monday at 15:00 UTC with retry limit 1 and cost cap 25 cents.",
+        "I acknowledge AgentC native risk and run runtime_cron_request for a read-only web_search every Monday at 15:00 UTC with retry limit 1 and cost cap 25 cents.",
       fetchFn,
       env: {
         AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
@@ -294,6 +294,133 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     );
     expect(reply?.content).toContain("hard_block_after_acknowledgement: false");
     expect(reply?.content).toContain("Runtime cron request created through AgentNexus Tool Gateway.");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
+  it("requires explicit runtime acknowledgement before executing high-risk native tools", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "runtime_cron_request",
+                    riskDisclosure: {
+                      riskTier: "high",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      throw new Error("execute endpoint must not be called before acknowledgement");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text:
+        "Create a governed scheduled monitoring cron workflow. Use runtime_cron_request for a read-only web_search every Monday at 15:00 UTC.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(reply?.content).toContain("Native tool acknowledgement required");
+    expect(reply?.content).toContain("execution_status: waiting_for_user_acknowledgement");
+    expect(reply?.content).toContain("hard_block_after_acknowledgement: false");
+    expect(reply?.content).toContain("To continue, reply:");
+    expect(reply?.content).toContain("I acknowledge AgentC native risk and run runtime_cron_request");
+    expect(reply?.content).not.toContain("Runtime cron request created through AgentNexus Tool Gateway.");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
+  it("executes high-risk native tools after explicit runtime acknowledgement", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "runtime_cron_request",
+                    riskDisclosure: {
+                      riskTier: "high",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              id: "cron_redacted",
+              status: "requested",
+              scheduleKind: "tool_gateway_read",
+              timezone: "UTC",
+              retryLimit: 1,
+              costCapCents: 25,
+              requiresApproval: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run runtime_cron_request.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://agtnx.ai/api/runtime/tools/execute",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+      }),
+    );
+    expect(reply?.content).toContain("Native tool risk disclosure");
+    expect(reply?.content).toContain("user_acknowledgement_required: true");
+    expect(reply?.content).toContain("Runtime cron request created through AgentNexus Tool Gateway.");
+    expect(reply?.content).not.toContain("Native tool acknowledgement required");
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
