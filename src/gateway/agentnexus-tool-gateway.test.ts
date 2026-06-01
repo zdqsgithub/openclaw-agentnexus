@@ -415,6 +415,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       expect.objectContaining({
         method: "POST",
         redirect: "error",
+        body: expect.stringContaining('"riskAcknowledgement":true'),
       }),
     );
     expect(reply?.content).toContain("Native tool risk disclosure");

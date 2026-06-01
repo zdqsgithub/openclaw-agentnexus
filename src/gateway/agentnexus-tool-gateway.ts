@@ -250,21 +250,25 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     signal: options.signal,
   });
 
-  if (requiresRuntimeAcknowledgement(riskDisclosure) && !hasRuntimeRiskAcknowledgement(options.text)) {
+  const runtimeRiskAcknowledged = hasRuntimeRiskAcknowledgement(options.text);
+  if (requiresRuntimeAcknowledgement(riskDisclosure) && !runtimeRiskAcknowledged) {
     return {
       adapter: "agentnexus-tool-gateway",
       content: formatRuntimeAcknowledgementPrompt(request, riskDisclosure),
     };
   }
+  const executableRequest = runtimeRiskAcknowledged
+    ? withRuntimeRiskAcknowledgement(request)
+    : request;
 
   return {
     adapter: "agentnexus-tool-gateway",
     content: formatAgentNexusRuntimeToolAnswer({
-      request,
+      request: executableRequest,
       riskDisclosure,
       result: await executeAgentNexusRuntimeTool({
         config,
-        request,
+        request: executableRequest,
         fetchFn: options.fetchFn,
         signal: options.signal,
       }),
@@ -778,6 +782,18 @@ function hasRuntimeRiskAcknowledgement(text: string) {
   const lower = text.toLowerCase();
   return /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(lower) &&
     /\b(agentc native risk|native risk|risk disclosure|tool risk|runtime_cron_request)\b/.test(lower);
+}
+
+function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): AgentNexusRuntimeToolRequest {
+  return {
+    ...request,
+    args: {
+      ...request.args,
+      riskAcknowledgement: true,
+      runtimeRiskAcknowledgement: true,
+      acknowledgementSurface: "agentc_runtime_prompt",
+    },
+  };
 }
 
 function formatRuntimeAcknowledgementPrompt(
