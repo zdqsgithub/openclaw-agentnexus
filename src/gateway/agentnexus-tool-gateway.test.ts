@@ -398,6 +398,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       "range: Sheet1!A1:Z20",
       "rowCount: 3",
       "columnCount: 2",
+      "write_status: approval_required",
     ].join("\n"));
     expect(answer).not.toContain("Google Sheets read completed through AgentNexus Tool Gateway.");
     expect(answer).not.toContain("row_count");
@@ -405,7 +406,6 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("headers:");
     expect(answer).not.toContain("preview:");
     expect(answer).not.toContain("GWS read | Pass");
-    expect(answer).not.toContain("Google Sheets write was not executed.");
     expect(answer).not.toContain("redaction:");
     expect(answer).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
     expect(answer).not.toMatch(/person@example.com|access_token|refresh_token|Bearer/i);
