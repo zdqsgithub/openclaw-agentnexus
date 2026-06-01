@@ -264,6 +264,50 @@ afterEach(() => {
 });
 
 describe("grouped chat rendering", () => {
+  it("renders AgentC runtime risk acknowledgement markdown as a native warning card", () => {
+    const container = document.createElement("div");
+
+    renderAssistantMessage(container, {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: [
+            "## Native tool acknowledgement required",
+            "",
+            "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk.",
+            "",
+            "### Native tool risk disclosure",
+            "",
+            "- **Risk tier (`risk_tier`):** medium",
+            "- **Risk fee state (`risk_fee_billing_state`):** configured, not charged",
+            "- **Disclaimer:** governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
+            "- **Action:** `runtime_skill_execute`",
+            "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+            "",
+            "**To continue, reply:** `I acknowledge AgentC native risk and run runtime_skill_execute`",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    const card = container.querySelector<HTMLElement>('[data-agentc-runtime-risk-ack-card="true"]');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector('[data-agentc-runtime-risk-ack-title="true"]')?.textContent).toContain(
+      "Native tool acknowledgement required",
+    );
+    expect(card?.querySelector('[data-agentc-runtime-risk-ack-action="true"]')?.textContent).toContain(
+      "runtime_skill_execute",
+    );
+    expect(card?.querySelector('[data-agentc-runtime-risk-ack-fee="true"]')?.textContent).toContain(
+      "configured, not charged",
+    );
+    expect(card?.querySelector('[data-agentc-runtime-risk-ack-phrase="true"]')?.textContent).toContain(
+      "I acknowledge AgentC native risk and run runtime_skill_execute",
+    );
+    expect(card?.textContent).toContain("no active insurance, warranty, underwriting, indemnity, or payout coverage");
+  });
+
   it("positions delete confirm by message side", () => {
     const container = document.createElement("div");
     clearDeleteConfirmSkip();
