@@ -91,6 +91,59 @@ function renderChatTextHtml(markdown: string, normalizedRole: string): string {
     : toSanitizedChatMarkdownHtml(markdown);
 }
 
+function isAgentCRuntimeRiskAcknowledgementMarkdown(markdown: string, normalizedRole: string): boolean {
+  if (normalizedRole !== "assistant") {
+    return false;
+  }
+  return /^##\s+Native tool acknowledgement required\s*$/im.test(markdown) &&
+    /execution_status:\s*waiting_for_user_acknowledgement/i.test(markdown) &&
+    /I acknowledge AgentC native risk and run [a-z0-9_:-]+/i.test(markdown);
+}
+
+function extractFirstMarkdownField(markdown: string, label: string): string {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\*\\*${escapedLabel}[^\\n]*?:\\*\\*\\s*([^\\n]+)`, "i");
+  return markdown.match(pattern)?.[1]?.replace(/`/g, "").trim() ?? "not specified";
+}
+
+function extractRuntimeAcknowledgementPhrase(markdown: string): string {
+  return markdown.match(/I acknowledge AgentC native risk and run [a-z0-9_:-]+/i)?.[0] ??
+    "I acknowledge AgentC native risk and run the requested tool";
+}
+
+function renderChatMarkdown(markdown: string, normalizedRole: string) {
+  const body = html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
+    ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
+  </div>`;
+
+  if (!isAgentCRuntimeRiskAcknowledgementMarkdown(markdown, normalizedRole)) {
+    return body;
+  }
+
+  return html`
+    <section class="agentc-runtime-risk-ack-card" data-agentc-runtime-risk-ack-card="true">
+      <div class="agentc-runtime-risk-ack-card__header">
+        <span class="agentc-runtime-risk-ack-card__eyebrow">AgentC Native Tool Risk</span>
+        <strong data-agentc-runtime-risk-ack-title="true">Native tool acknowledgement required</strong>
+      </div>
+      <div class="agentc-runtime-risk-ack-card__grid">
+        <div>
+          <span class="agentc-runtime-risk-ack-card__label">Action</span>
+          <span data-agentc-runtime-risk-ack-action="true">${extractFirstMarkdownField(markdown, "Action")}</span>
+        </div>
+        <div>
+          <span class="agentc-runtime-risk-ack-card__label">Risk fee</span>
+          <span data-agentc-runtime-risk-ack-fee="true">${extractFirstMarkdownField(markdown, "Risk fee state")}</span>
+        </div>
+      </div>
+      <div class="agentc-runtime-risk-ack-card__phrase" data-agentc-runtime-risk-ack-phrase="true">
+        ${extractRuntimeAcknowledgementPhrase(markdown)}
+      </div>
+      ${body}
+    </section>
+  `;
+}
+
 function renderChatTimestamp(timestamp: number) {
   const display = formatChatTimestampForDisplay(timestamp);
   return html`
@@ -1425,9 +1478,7 @@ function renderGroupedMessage(
                             <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                           </details>`
                         : markdown
-                          ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                              ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
-                            </div>`
+                          ? renderChatMarkdown(markdown, normalizedRole)
                           : nothing}
                       ${hasToolCards
                         ? singleToolCard && !markdown && !hasImages
@@ -1487,9 +1538,7 @@ function renderGroupedMessage(
                   <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                 </details>`
               : markdown
-                ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                    ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
-                  </div>`
+                ? renderChatMarkdown(markdown, normalizedRole)
                 : nothing}
             ${hasToolCards
               ? renderInlineToolCards(toolCards, {
