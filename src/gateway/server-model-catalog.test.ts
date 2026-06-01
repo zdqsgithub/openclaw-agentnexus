@@ -15,12 +15,21 @@ describe("resolveGatewayModelCatalogLoader", () => {
       models: {
         providers: {
           openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
             models: [
               {
                 id: "moonshotai/kimi-k2.6",
                 name: "Kimi K2.6",
                 contextWindow: 131_072,
                 input: ["text"],
+                reasoning: false,
+                maxTokens: 8_192,
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
               },
             ],
           },
@@ -41,6 +50,7 @@ describe("resolveGatewayModelCatalogLoader", () => {
         provider: "openrouter",
         contextWindow: 131_072,
         input: ["text"],
+        reasoning: false,
       },
     ]);
     expect(fallback).not.toHaveBeenCalled();
