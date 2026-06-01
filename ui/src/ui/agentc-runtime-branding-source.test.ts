@@ -60,10 +60,13 @@ function readPngAlphaBounds(path: string) {
       const upLeft = x >= bytesPerPixel ? previous[x - bytesPerPixel] : 0;
       let value = raw[x];
 
-      if (filter === 1) value = (value + left) & 0xff;
-      else if (filter === 2) value = (value + up) & 0xff;
-      else if (filter === 3) value = (value + Math.floor((left + up) / 2)) & 0xff;
-      else if (filter === 4) {
+      if (filter === 1) {
+        value = (value + left) & 0xff;
+      } else if (filter === 2) {
+        value = (value + up) & 0xff;
+      } else if (filter === 3) {
+        value = (value + Math.floor((left + up) / 2)) & 0xff;
+      } else if (filter === 4) {
         const p = left + up - upLeft;
         const pa = Math.abs(p - left);
         const pb = Math.abs(p - up);
@@ -78,7 +81,9 @@ function readPngAlphaBounds(path: string) {
     }
 
     for (let x = 0; x < width; x += 1) {
-      if (current[x * bytesPerPixel + 3] === 0) continue;
+      if (current[x * bytesPerPixel + 3] === 0) {
+        continue;
+      }
       minX = Math.min(minX, x);
       minY = Math.min(minY, y);
       maxX = Math.max(maxX, x);

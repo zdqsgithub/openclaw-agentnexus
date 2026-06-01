@@ -87,10 +87,16 @@ describe("skills.status AgentNexus governed skills", () => {
         },
       });
     } finally {
-      if (previousManifestUrl === undefined) delete process.env.AGENTNEXUS_TOOL_MANIFEST_URL;
-      else process.env.AGENTNEXUS_TOOL_MANIFEST_URL = previousManifestUrl;
-      if (previousToken === undefined) delete process.env.AGENTNEXUS_RUNTIME_TOKEN;
-      else process.env.AGENTNEXUS_RUNTIME_TOKEN = previousToken;
+      if (previousManifestUrl === undefined) {
+        delete process.env.AGENTNEXUS_TOOL_MANIFEST_URL;
+      } else {
+        process.env.AGENTNEXUS_TOOL_MANIFEST_URL = previousManifestUrl;
+      }
+      if (previousToken === undefined) {
+        delete process.env.AGENTNEXUS_RUNTIME_TOKEN;
+      } else {
+        process.env.AGENTNEXUS_RUNTIME_TOKEN = previousToken;
+      }
       vi.unstubAllGlobals();
     }
 

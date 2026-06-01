@@ -24,6 +24,7 @@ export type AgentNexusRuntimeToolRequest = {
 
 export type AgentNexusRuntimeToolConfig = {
   gatewayUrl: string;
+  manifestUrl?: string;
   runtimeToken: string;
 };
 
@@ -38,6 +39,16 @@ export type AgentNexusRuntimeTextReply = {
   content: string;
 };
 
+export type AgentNexusRuntimeRiskDisclosure = {
+  riskTier?: string;
+  warningMode?: string;
+  acknowledgementSurface?: string;
+  userAcknowledgementRequired?: boolean;
+  riskFeeBillingState?: string;
+  disclaimer?: string;
+  hardBlockAfterAcknowledgement?: boolean;
+};
+
 export type AgentNexusRuntimeDirectChatConfig = {
   apiKey: string;
   apiUrl: string;
@@ -48,11 +59,12 @@ export function readAgentNexusRuntimeToolConfig(
   env: Record<string, string | undefined> = process.env,
 ): AgentNexusRuntimeToolConfig | null {
   const gatewayUrl = env.AGENTNEXUS_TOOL_GATEWAY_URL?.trim();
+  const manifestUrl = env.AGENTNEXUS_TOOL_MANIFEST_URL?.trim();
   const runtimeToken = env.AGENTNEXUS_RUNTIME_TOKEN?.trim();
   if (!gatewayUrl || !runtimeToken) {
     return null;
   }
-  return { gatewayUrl, runtimeToken };
+  return { gatewayUrl, ...(manifestUrl ? { manifestUrl } : {}), runtimeToken };
 }
 
 export function readAgentNexusRuntimeDirectChatConfig(
@@ -235,6 +247,12 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     adapter: "agentnexus-tool-gateway",
     content: formatAgentNexusRuntimeToolAnswer({
       request,
+      riskDisclosure: await fetchAgentNexusRuntimeRiskDisclosure({
+        config,
+        request,
+        fetchFn: options.fetchFn,
+        signal: options.signal,
+      }),
       result: await executeAgentNexusRuntimeTool({
         config,
         request,
@@ -339,6 +357,7 @@ export async function executeAgentNexusRuntimeDirectChat(options: {
 
 export function formatAgentNexusRuntimeToolAnswer(params: {
   request: AgentNexusRuntimeToolRequest;
+  riskDisclosure?: AgentNexusRuntimeRiskDisclosure | null;
   result: AgentNexusRuntimeToolResult;
 }): string {
   if (!params.result.ok) {
@@ -351,21 +370,26 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     return `AgentNexus Tool Gateway returned ${code}: ${error}`;
   }
 
+  const riskDisclosurePrefix = formatRuntimeRiskDisclosureBlock(params.riskDisclosure);
+
   if (params.request.intent === "google_calendar_read") {
     const eventCount = countResultItems(params.result.body);
     const rangeStart = typeof params.request.args.timeMin === "string"
       ? params.request.args.timeMin
       : "now";
     const dateRange = `${rangeStart} to next authorized window`;
-    return [
+    return withRiskDisclosurePrefix(riskDisclosurePrefix, [
       `event_count: ${eventCount}`,
       `date_range: ${dateRange}`,
       "source: authorized Google Calendar read",
-    ].join("\n");
+    ].join("\n"));
   }
 
   if (params.request.intent === "google_sheets_read") {
-    return formatGoogleSheetsReadAnswer(params.result.body, params.request.args);
+    return withRiskDisclosurePrefix(
+      riskDisclosurePrefix,
+      formatGoogleSheetsReadAnswer(params.result.body, params.request.args),
+    );
   }
 
   if (params.request.intent === "governed_skill") {
@@ -385,33 +409,36 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     const summary = typeof output.summary === "string" && output.summary.trim()
       ? output.summary.trim()
       : "Governed skill completed without a text summary.";
-    return [
+    return withRiskDisclosurePrefix(riskDisclosurePrefix, [
       `skill_status: ${skillStatus}`,
       `skill_id: ${skillId}`,
       `summary: ${summary}`,
       "source: AgentNexus governed skills catalog",
       "redacted: true",
-    ].join("\n");
+    ].join("\n"));
   }
 
   if (params.request.intent === "github_public_repo_read") {
-    return formatGitHubPublicRepoReadAnswer(params.result.body);
+    return withRiskDisclosurePrefix(riskDisclosurePrefix, formatGitHubPublicRepoReadAnswer(params.result.body));
   }
 
   if (params.request.intent === "runtime_cron_request") {
-    return formatRuntimeCronRequestAnswer(params.result.body, params.request.args);
+    return withRiskDisclosurePrefix(
+      riskDisclosurePrefix,
+      formatRuntimeCronRequestAnswer(params.result.body, params.request.args),
+    );
   }
 
   if (params.request.intent === "channel_publish_preview") {
-    return formatChannelPublishPreviewAnswer(params.result.body);
+    return withRiskDisclosurePrefix(riskDisclosurePrefix, formatChannelPublishPreviewAnswer(params.result.body));
   }
 
   if (params.request.intent === "runtime_session_export") {
-    return formatRuntimeSessionExportAnswer(params.result.body);
+    return withRiskDisclosurePrefix(riskDisclosurePrefix, formatRuntimeSessionExportAnswer(params.result.body));
   }
 
   const citationItems = extractCitationItems(params.result.body);
-  return [
+  return withRiskDisclosurePrefix(riskDisclosurePrefix, [
     "Cited web search completed through AgentNexus Tool Gateway.",
     "",
     citationItems.length > 0
@@ -422,7 +449,40 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
       ].join("\n")).join("\n\n")
       : "source_urls: none returned",
     "redaction: provider credentials and server-side search keys stay in AgentNexus.",
-  ].join("\n");
+  ].join("\n"));
+}
+
+export async function fetchAgentNexusRuntimeRiskDisclosure(options: {
+  config: AgentNexusRuntimeToolConfig;
+  request: AgentNexusRuntimeToolRequest;
+  fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<AgentNexusRuntimeRiskDisclosure | null> {
+  if (!options.config.manifestUrl) {
+    return null;
+  }
+  const fetchFn = options.fetchFn ?? fetch;
+  const boundedSignal = createBoundedSignal(options.signal, 15_000);
+  try {
+    const response = await fetchFn(options.config.manifestUrl, {
+      method: "GET",
+      redirect: "error",
+      signal: boundedSignal.signal,
+      headers: {
+        authorization: `Bearer ${options.config.runtimeToken}`,
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body = await response.json().catch(() => ({}));
+    return findRuntimeToolRiskDisclosure(body, options.request.tool);
+  } catch {
+    return null;
+  } finally {
+    boundedSignal.cleanup();
+  }
 }
 
 export function extractAgentNexusRuntimeConversationText(messages: unknown[]): string {
@@ -602,6 +662,116 @@ function readToolResult(body: Record<string, unknown>) {
     return undefined;
   }
   return (data as { result?: unknown }).result;
+}
+
+function findRuntimeToolRiskDisclosure(
+  body: unknown,
+  toolName: RuntimeToolName,
+): AgentNexusRuntimeRiskDisclosure | null {
+  const manifest = readRuntimeManifest(body);
+  if (!manifest) {
+    return null;
+  }
+  const tools = Array.isArray(manifest.tools) ? manifest.tools : [];
+  const tool = tools.find((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return false;
+    }
+    const name = (entry as { name?: unknown; id?: unknown }).name ?? (entry as { id?: unknown }).id;
+    return name === toolName;
+  });
+  if (tool && typeof tool === "object" && !Array.isArray(tool)) {
+    const disclosure = (tool as { riskDisclosure?: unknown }).riskDisclosure;
+    if (isRiskDisclosureRecord(disclosure)) {
+      return normalizeRuntimeRiskDisclosure(disclosure);
+    }
+  }
+  const governance = manifest.governance;
+  if (governance && typeof governance === "object" && !Array.isArray(governance)) {
+    const disclosure = (governance as { riskDisclosure?: unknown }).riskDisclosure;
+    if (isRiskDisclosureRecord(disclosure)) {
+      return normalizeRuntimeRiskDisclosure(disclosure);
+    }
+  }
+  return null;
+}
+
+function readRuntimeManifest(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const record = body as Record<string, unknown>;
+  if (record.tools || record.governance) {
+    return record;
+  }
+  const data = record.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const manifest = (data as { manifest?: unknown }).manifest;
+    if (manifest && typeof manifest === "object" && !Array.isArray(manifest)) {
+      return manifest as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function isRiskDisclosureRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeRuntimeRiskDisclosure(value: Record<string, unknown>): AgentNexusRuntimeRiskDisclosure {
+  return {
+    ...(typeof value.riskTier === "string" ? { riskTier: sanitizeOneLine(value.riskTier, 80) } : {}),
+    ...(typeof value.warningMode === "string" ? { warningMode: sanitizeOneLine(value.warningMode, 120) } : {}),
+    ...(typeof value.acknowledgementSurface === "string"
+      ? { acknowledgementSurface: sanitizeOneLine(value.acknowledgementSurface, 160) }
+      : {}),
+    ...(typeof value.userAcknowledgementRequired === "boolean"
+      ? { userAcknowledgementRequired: value.userAcknowledgementRequired }
+      : {}),
+    ...(typeof value.riskFeeBillingState === "string"
+      ? { riskFeeBillingState: sanitizeOneLine(value.riskFeeBillingState, 120) }
+      : {}),
+    ...(typeof value.disclaimer === "string" ? { disclaimer: sanitizeOneLine(value.disclaimer, 240) } : {}),
+    ...(typeof value.hardBlockAfterAcknowledgement === "boolean"
+      ? { hardBlockAfterAcknowledgement: value.hardBlockAfterAcknowledgement }
+      : {}),
+  };
+}
+
+function formatRuntimeRiskDisclosureBlock(disclosure: AgentNexusRuntimeRiskDisclosure | null | undefined) {
+  if (!disclosure) {
+    return null;
+  }
+  return [
+    "Native tool risk disclosure",
+    ...(disclosure.riskTier ? [`risk_tier: ${disclosure.riskTier}`] : []),
+    ...(disclosure.warningMode ? [`warning_mode: ${disclosure.warningMode}`] : []),
+    ...(disclosure.acknowledgementSurface
+      ? [`acknowledgement_surface: ${disclosure.acknowledgementSurface}`]
+      : []),
+    ...(typeof disclosure.userAcknowledgementRequired === "boolean"
+      ? [`user_acknowledgement_required: ${disclosure.userAcknowledgementRequired}`]
+      : []),
+    ...(disclosure.riskFeeBillingState
+      ? [`risk_fee_billing_state: ${disclosure.riskFeeBillingState}`]
+      : []),
+    `disclaimer: ${formatRiskDisclosureDisclaimer(disclosure.disclaimer)}`,
+    `hard_block_after_acknowledgement: ${disclosure.hardBlockAfterAcknowledgement === true}`,
+  ].join("\n");
+}
+
+function formatRiskDisclosureDisclaimer(value: string | undefined) {
+  if (value === "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout") {
+    return "governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage";
+  }
+  if (value && value.trim()) {
+    return value;
+  }
+  return "governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage";
+}
+
+function withRiskDisclosurePrefix(prefix: string | null, answer: string) {
+  return prefix ? `${prefix}\n\n${answer}` : answer;
 }
 
 function extractCitationItems(body: Record<string, unknown>) {
@@ -931,12 +1101,16 @@ function extractFormattedSearchItems(text: string) {
   const items: Array<{ title: string; summary: string; url: string }> = [];
   for (let index = 0; index < lines.length; index += 1) {
     const titleMatch = lines[index]?.match(/^\d+\.\s+(.+)$/);
-    if (!titleMatch) continue;
+    if (!titleMatch) {
+      continue;
+    }
     const summaryLine = lines[index + 1] ?? "";
     const urlLine = lines[index + 2] ?? "";
     const summary = summaryLine.replace(/^brief_summary:\s*/i, "").trim();
     const url = urlLine.replace(/^source_url:\s*/i, "").trim();
-    if (!summary || !/^https?:\/\//i.test(url)) continue;
+    if (!summary || !/^https?:\/\//i.test(url)) {
+      continue;
+    }
     items.push({
       title: sanitizeOneLine(titleMatch[1], 160),
       summary: sanitizeOneLine(summary, 280),
