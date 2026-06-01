@@ -5,7 +5,8 @@ type RuntimeToolName =
   | "github_public_repo_read"
   | "runtime_skill_execute"
   | "runtime_cron_request"
-  | "channel_publish_preview";
+  | "channel_publish_preview"
+  | "runtime_session_export";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
@@ -17,7 +18,8 @@ export type AgentNexusRuntimeToolRequest = {
     | "github_public_repo_read"
     | "governed_skill"
     | "runtime_cron_request"
-    | "channel_publish_preview";
+    | "channel_publish_preview"
+    | "runtime_session_export";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -90,6 +92,10 @@ export function resolveAgentNexusRuntimeToolRequest(
   const channelPublishPreview = parseChannelPublishPreviewRequest(normalized);
   if (channelPublishPreview) {
     return channelPublishPreview;
+  }
+  const sessionExport = parseRuntimeSessionExportRequest(normalized);
+  if (sessionExport) {
+    return sessionExport;
   }
 
   const githubRepoUrl = extractPublicGitHubRepoUrl(normalized);
@@ -400,6 +406,10 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     return formatChannelPublishPreviewAnswer(params.result.body);
   }
 
+  if (params.request.intent === "runtime_session_export") {
+    return formatRuntimeSessionExportAnswer(params.result.body);
+  }
+
   const citationItems = extractCitationItems(params.result.body);
   return [
     "Cited web search completed through AgentNexus Tool Gateway.",
@@ -528,6 +538,27 @@ function parseChannelPublishPreviewRequest(text: string): AgentNexusRuntimeToolR
         body: readPromptField(text, "Draft body") || "Redacted synthetic channel relay notification.",
         summary: readPromptField(text, "Draft summary") || "Synthetic AgentC channel relay notification.",
       },
+    },
+  };
+}
+
+function parseRuntimeSessionExportRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const lower = text.toLowerCase();
+  const explicitExport = /\bruntime_session_export\b/.test(lower) ||
+    (
+      /\b(workspace-file-report-generation|workspace report|report artifact|session export|repo_safe_metadata|runtimeSessionExportEvidence)\b/i.test(text) &&
+      /\b(export|report|artifact|scanner|repo-safe|repo safe|metadata_only_after_scan)\b/.test(lower)
+    );
+  if (!explicitExport) {
+    return null;
+  }
+
+  return {
+    tool: "runtime_session_export",
+    intent: "runtime_session_export",
+    args: {
+      sourceWorkflow: "workspace-file-report-generation",
+      reportTitle: "Report artifact generated in AgentC Runtime",
     },
   };
 }
@@ -724,6 +755,36 @@ function formatChannelPublishPreviewAnswer(body: Record<string, unknown>) {
     `redacted_draft: bodyPreview=[redacted], payloadKeys=${payloadKeys.length ? payloadKeys.join(", ") : "body, summary, title"}`,
     "safety_boundary: preview only from runtime; delivery requires AgentNexus approval; no Slack, Discord, Telegram, webhook URL, signing secret, or channel secret is exposed",
     "source: AgentNexus Channel Publish webhook pilot",
+  ].join("\n");
+}
+
+function formatRuntimeSessionExportAnswer(body: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const markdown = typeof record.markdown === "string" && record.markdown.trim()
+    ? sanitizeRuntimeSessionExportMarkdown(record.markdown)
+    : [
+      "# Report artifact generated in AgentC Runtime",
+      "",
+      "## Source workflow result",
+      "- source_workflow: workspace-file-report-generation",
+      "",
+      "## Export boundary",
+      "- repo_safe_metadata: hashes, counts, timestamps, and redaction status only",
+      "- raw transcript in repo evidence: false",
+      "",
+      "## Scanner status",
+      "- metadata_only_after_scan",
+      "",
+      "## Evidence fields",
+      "- runtimeSessionExportEvidence",
+    ].join("\n");
+  return [
+    markdown,
+    "",
+    "source: AgentNexus governed runtime session export",
   ].join("\n");
 }
 
@@ -931,6 +992,16 @@ function extractTextFromContent(content: unknown): string {
 
 function sanitizeOneLine(value: string, limit: number) {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function sanitizeRuntimeSessionExportMarkdown(value: string) {
+  return value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[redacted-email]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/(?:access_token|refresh_token|id_token|api_key|secret|password)=?["']?[A-Za-z0-9._-]{8,}/gi, "$1=[redacted]")
+    .replace(/(?:^|[\s"'=:])sk-[A-Za-z0-9._-]{16,}/g, " [redacted-secret]")
+    .replace(/\braw transcript included\b/giu, "raw transcript in repo evidence: false")
+    .slice(0, 3_000);
 }
 
 function sanitizeRepoEvidenceText(value: string, limit: number) {

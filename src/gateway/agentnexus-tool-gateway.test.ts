@@ -144,6 +144,24 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
   });
 
+  it("maps workspace report export requests to governed runtime session export", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      [
+        "Create a workspace-file-report-generation report artifact from the previous workflow result.",
+        "Use runtime_session_export and include runtimeSessionExportEvidence, repo_safe_metadata, and metadata_only_after_scan.",
+      ].join(" "),
+    );
+
+    expect(request).toEqual({
+      tool: "runtime_session_export",
+      intent: "runtime_session_export",
+      args: {
+        sourceWorkflow: "workspace-file-report-generation",
+        reportTitle: "Report artifact generated in AgentC Runtime",
+      },
+    });
+  });
+
   it("keeps channel publish setup in the AgentNexus governed Publish path", () => {
     const answer = buildChannelPublishBoundaryAnswer(
       "I want to set up Slack or Telegram channel access.",
@@ -246,6 +264,63 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     ].join("\n"));
     expect(answer).not.toContain("Private payload");
     expect(answer).not.toMatch(/https:\/\/webhook\.site|signing_secret|SLACK_BOT_TOKEN|discord\.com\/api\/webhooks|api\.telegram\.org|Bearer/i);
+  });
+
+  it("formats runtime session export artifacts with repo-safe boundaries", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "runtime_session_export",
+        intent: "runtime_session_export",
+        args: {
+          sourceWorkflow: "workspace-file-report-generation",
+          reportTitle: "Report artifact generated in AgentC Runtime",
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              reportTitle: "Report artifact generated in AgentC Runtime",
+              sourceWorkflow: "workspace-file-report-generation",
+              markdown: [
+                "# Report artifact generated in AgentC Runtime",
+                "",
+                "## Source workflow result",
+                "- source_workflow: workspace-file-report-generation",
+                "",
+                "## Export boundary",
+                "- repo_safe_metadata: hashes, counts, timestamps, and redaction status only",
+                "",
+                "## Scanner status",
+                "- metadata_only_after_scan",
+                "",
+                "## Evidence fields",
+                "- runtimeSessionExportEvidence",
+              ].join("\n"),
+              exportBoundary: {
+                repoSafeExportMode: "metadata_only_after_scan",
+                rawTranscriptInRepoEvidence: false,
+              },
+              evidence: {
+                section: "runtimeSessionExportEvidence",
+                redacted: true,
+              },
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain("# Report artifact generated in AgentC Runtime");
+    expect(answer).toContain("## Source workflow result");
+    expect(answer).toContain("runtimeSessionExportEvidence");
+    expect(answer).toContain("repo_safe_metadata");
+    expect(answer).toContain("metadata_only_after_scan");
+    expect(answer).toContain("source: AgentNexus governed runtime session export");
+    expect(answer).not.toMatch(/raw transcript included|customer@example.com|Bearer|access_token|refresh_token|sk-[A-Za-z0-9._-]{16,}/i);
   });
 
   it("formats Google Workspace results without raw event data", () => {
