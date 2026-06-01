@@ -4,7 +4,8 @@ type RuntimeToolName =
   | "calendar_list_events"
   | "github_public_repo_read"
   | "runtime_skill_execute"
-  | "runtime_cron_request";
+  | "runtime_cron_request"
+  | "channel_publish_preview";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
@@ -15,7 +16,8 @@ export type AgentNexusRuntimeToolRequest = {
     | "google_calendar_read"
     | "github_public_repo_read"
     | "governed_skill"
-    | "runtime_cron_request";
+    | "runtime_cron_request"
+    | "channel_publish_preview";
 };
 
 export type AgentNexusRuntimeToolConfig = {
@@ -84,6 +86,10 @@ export function resolveAgentNexusRuntimeToolRequest(
   const governedCron = parseGovernedCronRequest(normalized);
   if (governedCron) {
     return governedCron;
+  }
+  const channelPublishPreview = parseChannelPublishPreviewRequest(normalized);
+  if (channelPublishPreview) {
+    return channelPublishPreview;
   }
 
   const githubRepoUrl = extractPublicGitHubRepoUrl(normalized);
@@ -167,14 +173,6 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   signal?: AbortSignal;
   conversationText?: string;
 }): Promise<AgentNexusRuntimeTextReply | null> {
-  const channelBoundaryAnswer = buildChannelPublishBoundaryAnswer(options.text);
-  if (channelBoundaryAnswer) {
-    return {
-      adapter: "agentnexus-channel-boundary",
-      content: channelBoundaryAnswer,
-    };
-  }
-
   const previousSearchSummary = buildPreviousSearchSummaryReply(options.text, options.conversationText);
   if (previousSearchSummary) {
     return {
@@ -192,6 +190,13 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   }
 
   const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
+  const channelBoundaryAnswer = request ? null : buildChannelPublishBoundaryAnswer(options.text);
+  if (channelBoundaryAnswer) {
+    return {
+      adapter: "agentnexus-channel-boundary",
+      content: channelBoundaryAnswer,
+    };
+  }
   if (!request) {
     const directConfig = readAgentNexusRuntimeDirectChatConfig(options.env);
     if (!directConfig) {
@@ -391,6 +396,10 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     return formatRuntimeCronRequestAnswer(params.result.body, params.request.args);
   }
 
+  if (params.request.intent === "channel_publish_preview") {
+    return formatChannelPublishPreviewAnswer(params.result.body);
+  }
+
   const citationItems = extractCitationItems(params.result.body);
   return [
     "Cited web search completed through AgentNexus Tool Gateway.",
@@ -499,6 +508,33 @@ function parseGovernedCronRequest(text: string): AgentNexusRuntimeToolRequest | 
       prompt: text.slice(0, 1_000),
     },
   };
+}
+
+function parseChannelPublishPreviewRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const lower = text.toLowerCase();
+  const explicitPreview = /\bchannel_publish_preview\b/.test(lower) ||
+    (/\b(channel relay|channel publish|webhook)\b/.test(lower) && /\b(preview|draft preview|relay notification)\b/.test(lower));
+  if (!explicitPreview) {
+    return null;
+  }
+
+  return {
+    tool: "channel_publish_preview",
+    intent: "channel_publish_preview",
+    args: {
+      channelType: "webhook",
+      draft: {
+        title: readPromptField(text, "Draft title") || "AgentC governed channel relay notification",
+        body: readPromptField(text, "Draft body") || "Redacted synthetic channel relay notification.",
+        summary: readPromptField(text, "Draft summary") || "Synthetic AgentC channel relay notification.",
+      },
+    },
+  };
+}
+
+function readPromptField(text: string, label: string) {
+  const match = text.match(new RegExp(`${escapeRegExp(label)}:\\s*([\\s\\S]*?)(?=\\s+Draft\\s+(?:title|body|summary):|\\s+Return\\b|\\s+Do not\\b|$)`, "i"));
+  return sanitizeOneLine((match?.[1] ?? "").replace(/[.。]\s*$/u, ""), 240);
 }
 
 function readBoundedIntegerAfter(
@@ -657,6 +693,37 @@ function formatRuntimeCronRequestAnswer(body: Record<string, unknown>, args: Rec
     `cost_cap_cents: ${costCapCents}`,
     "safety_boundary: no cron shell, no cron browser, no Google write, no channel publish, no production secrets",
     "source: AgentNexus governed runtime cron",
+  ].join("\n");
+}
+
+function formatChannelPublishPreviewAnswer(body: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const redactedDraft = record.redactedDraft && typeof record.redactedDraft === "object" && !Array.isArray(record.redactedDraft)
+    ? record.redactedDraft as Record<string, unknown>
+    : {};
+  const target = record.target && typeof record.target === "object" && !Array.isArray(record.target)
+    ? record.target as Record<string, unknown>
+    : {};
+  const payloadKeys = Array.isArray(redactedDraft.payloadKeys)
+    ? redactedDraft.payloadKeys.filter((key): key is string => typeof key === "string")
+    : [];
+  const channelType = typeof record.channelType === "string" ? record.channelType : "webhook";
+  const riskLabel = typeof record.riskLabel === "string" ? record.riskLabel : "approval_required";
+  const hostHash = typeof target.hostHash === "string" ? target.hostHash : "redacted";
+  const requiresApproval = typeof record.requiresApproval === "boolean" ? record.requiresApproval : true;
+  return [
+    "Channel Publish preview created through AgentNexus Tool Gateway.",
+    "tool: channel_publish_preview",
+    `channel_type: ${channelType}`,
+    `requires_approval: ${requiresApproval}`,
+    `risk_label: ${riskLabel}`,
+    `target_host_hash: ${hostHash}`,
+    `redacted_draft: bodyPreview=[redacted], payloadKeys=${payloadKeys.length ? payloadKeys.join(", ") : "body, summary, title"}`,
+    "safety_boundary: preview only from runtime; delivery requires AgentNexus approval; no Slack, Discord, Telegram, webhook URL, signing secret, or channel secret is exposed",
+    "source: AgentNexus Channel Publish webhook pilot",
   ].join("\n");
 }
 
@@ -883,6 +950,10 @@ function sanitizeRepoEvidenceText(value: string, limit: number) {
 
 function sanitizeMarkdownTableCell(value: string) {
   return value.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readOpenRouterContent(body: unknown): string | null {
