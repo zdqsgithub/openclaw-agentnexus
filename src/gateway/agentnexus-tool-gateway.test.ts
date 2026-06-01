@@ -284,15 +284,15 @@ describe("AgentNexus runtime Tool Gateway client", () => {
         redirect: "error",
       }),
     );
-    expect(reply?.content).toContain("Native tool risk disclosure");
-    expect(reply?.content).toContain("risk_tier: high");
-    expect(reply?.content).toContain("warning_mode: warn_then_execute_when_eligible");
-    expect(reply?.content).toContain("acknowledgement_surface: agentnexus_control_plane_or_runtime_prompt");
-    expect(reply?.content).toContain("risk_fee_billing_state: configured_not_charged");
+    expect(reply?.content).toContain("### Native tool risk disclosure");
+    expect(reply?.content).toContain("**Risk tier (`risk_tier`):** high");
+    expect(reply?.content).toContain("**Warning mode (`warning_mode`):** warn then execute when eligible");
+    expect(reply?.content).toContain("**Acknowledgement surface (`acknowledgement_surface`):** AgentNexus control plane or runtime prompt");
+    expect(reply?.content).toContain("**Risk fee state (`risk_fee_billing_state`):** configured, not charged");
     expect(reply?.content).toContain(
-      "disclaimer: governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
+      "**Disclaimer:** governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
     );
-    expect(reply?.content).toContain("hard_block_after_acknowledgement: false");
+    expect(reply?.content).toContain("**Hard block after acknowledgement (`hard_block_after_acknowledgement`):** false");
     expect(reply?.content).toContain("Runtime cron request created through AgentNexus Tool Gateway.");
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
@@ -342,11 +342,11 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(reply?.content).toContain("Native tool acknowledgement required");
+    expect(reply?.content).toContain("## Native tool acknowledgement required");
     expect(reply?.content).toContain("execution_status: waiting_for_user_acknowledgement");
-    expect(reply?.content).toContain("hard_block_after_acknowledgement: false");
+    expect(reply?.content).toContain("**Hard block after acknowledgement (`hard_block_after_acknowledgement`):** false");
     expect(reply?.content).toContain("To continue, reply:");
-    expect(reply?.content).toContain("I acknowledge AgentC native risk and run runtime_cron_request");
+    expect(reply?.content).toContain("`I acknowledge AgentC native risk and run runtime_cron_request`");
     expect(reply?.content).not.toContain("Runtime cron request created through AgentNexus Tool Gateway.");
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
@@ -418,8 +418,8 @@ describe("AgentNexus runtime Tool Gateway client", () => {
         body: expect.stringContaining('"riskAcknowledgement":true'),
       }),
     );
-    expect(reply?.content).toContain("Native tool risk disclosure");
-    expect(reply?.content).toContain("user_acknowledgement_required: true");
+    expect(reply?.content).toContain("### Native tool risk disclosure");
+    expect(reply?.content).toContain("**User acknowledgement required (`user_acknowledgement_required`):** true");
     expect(reply?.content).toContain("Runtime cron request created through AgentNexus Tool Gateway.");
     expect(reply?.content).not.toContain("Native tool acknowledgement required");
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
