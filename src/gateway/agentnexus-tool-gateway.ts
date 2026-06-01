@@ -681,6 +681,7 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
     `range: ${range}`,
     `rowCount: ${rowCount}`,
     `columnCount: ${columnCount}`,
+    ...(args.requestedWrite === true ? ["write_status: approval_required"] : []),
   ].join("\n");
 }
 
