@@ -207,7 +207,11 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
-  const request = resolveAgentNexusRuntimeToolRequest(options.text, options.now);
+  const request = resolveAcknowledgedRuntimeToolRequest({
+    text: options.text,
+    conversationText: options.conversationText,
+    now: options.now,
+  }) ?? resolveAgentNexusRuntimeToolRequest(options.text, options.now);
   const channelBoundaryAnswer = request ? null : buildChannelPublishBoundaryAnswer(options.text);
   if (channelBoundaryAnswer) {
     return {
@@ -274,6 +278,53 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
       }),
     }),
   };
+}
+
+function resolveAcknowledgedRuntimeToolRequest(options: {
+  text: string;
+  conversationText?: string;
+  now?: Date;
+}): AgentNexusRuntimeToolRequest | null {
+  if (!hasRuntimeRiskAcknowledgement(options.text) || !options.conversationText) {
+    return null;
+  }
+  const acknowledgedTool = readAcknowledgedRuntimeToolName(options.text);
+  if (!acknowledgedTool) {
+    return null;
+  }
+  const priorUserMessages = extractPriorRuntimeUserMessages(options.conversationText);
+  for (const message of priorUserMessages.reverse()) {
+    const request = resolveAgentNexusRuntimeToolRequest(message, options.now);
+    if (request?.tool === acknowledgedTool) {
+      return request;
+    }
+  }
+  return null;
+}
+
+function readAcknowledgedRuntimeToolName(text: string): RuntimeToolName | null {
+  const match = text.match(/\brun\s+([a-z0-9_:-]+)\b/i);
+  const toolName = match?.[1]?.toLowerCase();
+  if (
+    toolName === "web_search" ||
+    toolName === "calendar_list_events" ||
+    toolName === "sheets_read_range" ||
+    toolName === "github_public_repo_read" ||
+    toolName === "channel_publish_preview" ||
+    toolName === "runtime_skill_execute" ||
+    toolName === "runtime_cron_request" ||
+    toolName === "runtime_session_export"
+  ) {
+    return toolName;
+  }
+  return null;
+}
+
+function extractPriorRuntimeUserMessages(conversationText: string): string[] {
+  return Array.from(conversationText.matchAll(/^user:\s*([^\n]+)/gim))
+    .map((match) => match[1]?.trim() ?? "")
+    .filter((message) => message && !hasRuntimeRiskAcknowledgement(message))
+    .slice(-8);
 }
 
 export async function executeAgentNexusRuntimeTool(options: {
