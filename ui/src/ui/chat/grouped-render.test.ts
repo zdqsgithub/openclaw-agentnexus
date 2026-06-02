@@ -363,6 +363,47 @@ describe("grouped chat rendering", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("sends the full AgentC web search acknowledgement phrase including the query", () => {
+    const container = document.createElement("div");
+    const onContinue = vi.fn();
+
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "## Native tool acknowledgement required",
+              "",
+              "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk.",
+              "",
+              "### Native tool risk disclosure",
+              "",
+              "- **Risk tier (`risk_tier`):** medium",
+              "- **Risk fee state (`risk_fee_billing_state`):** configured, not charged",
+              "- **Disclaimer:** governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
+              "- **Action:** `web_search`",
+              "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+              "",
+              "**To continue, reply:** `I acknowledge AgentC native risk and run web_search for: Search the web for current agent governance news and include source URLs.`",
+            ].join("\n"),
+          },
+        ],
+      },
+      {
+        onRiskAcknowledgementContinue: onContinue,
+      } as Partial<RenderMessageGroupOptions>,
+    );
+
+    container.querySelector<HTMLButtonElement>('[data-agentc-runtime-risk-ack-continue="true"]')?.click();
+
+    expect(onContinue).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run web_search for: Search the web for current agent governance news and include source URLs.",
+    );
+  });
+
   it("positions delete confirm by message side", () => {
     const container = document.createElement("div");
     clearDeleteConfirmSkip();

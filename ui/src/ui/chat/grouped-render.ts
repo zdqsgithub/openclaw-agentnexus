@@ -107,6 +107,10 @@ function extractFirstMarkdownField(markdown: string, label: string): string {
 }
 
 function extractRuntimeAcknowledgementPhrase(markdown: string): string {
+  const explicitPhrase = markdown.match(/\*\*To continue,\s*reply:\*\*\s*`([^`]+)`/i)?.[1]?.trim();
+  if (explicitPhrase) {
+    return explicitPhrase;
+  }
   return markdown.match(/I acknowledge AgentC native risk and run [a-z0-9_:-]+/i)?.[0] ??
     "I acknowledge AgentC native risk and run the requested tool";
 }
