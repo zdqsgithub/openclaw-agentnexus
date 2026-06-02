@@ -389,8 +389,37 @@ function readAcknowledgedRuntimeToolName(text: string): RuntimeToolName | null {
 }
 
 function extractPriorRuntimeUserMessages(conversationText: string): string[] {
-  return Array.from(conversationText.matchAll(/^user:\s*([^\n]+)/gim))
-    .map((match) => match[1]?.trim() ?? "")
+  const messages: string[] = [];
+  let currentRole: string | null = null;
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (currentRole === "user") {
+      const message = currentLines.join("\n").trim();
+      if (message) {
+        messages.push(message);
+      }
+    }
+    currentRole = null;
+    currentLines = [];
+  };
+
+  for (const line of conversationText.split(/\r?\n/)) {
+    const roleMatch = line.match(/^(user|assistant|system|tool):\s*(.*)$/i);
+    if (roleMatch) {
+      flush();
+      currentRole = roleMatch[1]?.toLowerCase() ?? null;
+      currentLines = [roleMatch[2] ?? ""];
+      continue;
+    }
+    if (currentRole) {
+      currentLines.push(line);
+    }
+  }
+  flush();
+
+  return messages
+    .map((message) => message.trim())
     .filter((message) => message && !hasRuntimeRiskAcknowledgement(message))
     .slice(-8);
 }
@@ -1147,8 +1176,11 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
       : "A1:Z20";
   const rowCount = typeof record.rowCount === "number" ? record.rowCount : 0;
   const columnCount = typeof record.columnCount === "number" ? record.columnCount : 0;
+  const source = typeof record.source === "string" && /\b(?:authorized|public) Google Sheets read\b/i.test(record.source)
+    ? sanitizeOneLine(record.source, 80)
+    : "authorized Google Sheets read";
   return [
-    "source: authorized Google Sheets read",
+    `source: ${source}`,
     `range: ${range}`,
     `rowCount: ${rowCount}`,
     `columnCount: ${columnCount}`,
