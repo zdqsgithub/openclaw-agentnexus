@@ -1279,6 +1279,74 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toMatch(/person@example.com|access_token|refresh_token|Bearer/i);
   });
 
+  it("surfaces redacted Google Sheets session follow-up context without raw values", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "sheets_read_range",
+        intent: "google_sheets_read",
+        args: {
+          spreadsheetId: "sheet_id_must_not_render",
+          range: "Sheet1!A1:Z20",
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              readOnly: true,
+              redacted: true,
+              resultType: "spreadsheet_values",
+              source: "public Google Sheets read",
+              range: "Sheet1!A1:Z20",
+              rowCount: 20,
+              columnCount: 8,
+              previewRows: [
+                ["customer@example.com", "Private launch notes"],
+              ],
+            },
+            sessionGovernance: {
+              toolContext: {
+                id: "tool_ctx_redacted",
+                capabilityId: "google_sheets_read",
+                nativeToolId: "sheets_read_range",
+                summary: "source: public Google Sheets read; range: Sheet1!A1:Z20; rowCount: 20; columnCount: 8",
+                safePreview: [
+                  { label: "source", value: "public Google Sheets read" },
+                  { label: "range", value: "Sheet1!A1:Z20" },
+                  { label: "rowCount", value: "20" },
+                  { label: "columnCount", value: "8" },
+                ],
+                rawPayloadStored: false,
+                redactionPolicy: "redacted_summary",
+                redacted: true,
+              },
+              followUpGrounding: {
+                enabled: true,
+                allowedFor: "same_session_same_resource_read_followups",
+                mutationBoundary: "writes_or_scope_expansion_require_new_approval",
+                redacted: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain("source: public Google Sheets read");
+    expect(answer).toContain("range: Sheet1!A1:Z20");
+    expect(answer).toContain("rowCount: 20");
+    expect(answer).toContain("columnCount: 8");
+    expect(answer).toContain("follow_up_context: active for this session");
+    expect(answer).toContain("follow_up_boundary: read follow-ups allowed; writes require approval");
+    expect(answer).not.toContain("tool_ctx_redacted");
+    expect(answer).not.toContain("sheet_id_must_not_render");
+    expect(answer).not.toContain("customer@example.com");
+    expect(answer).not.toContain("Private launch notes");
+    expect(answer).not.toMatch(/access_token|refresh_token|Bearer|rawPayloadStored:\s*true/i);
+  });
+
   it("does not stringify non-text Calendar range arguments into runtime output", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
@@ -1527,6 +1595,75 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).toContain("README.md");
     expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway github_public_repo_read result");
     expect(reply?.content).not.toMatch(/cannot access GitHub|can't access GitHub|github_pat|ghp_|Bearer|private repo/i);
+  });
+
+  it("answers Google Sheets follow-ups from the previous redacted session context", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("fresh model or tool request should not be executed for Sheets follow-up grounding");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "what is this googlesheet contain? give me a detailed summary",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      conversationText: [
+        "source: public Google Sheets read",
+        "range: Sheet1!A1:Z20",
+        "rowCount: 20",
+        "columnCount: 8",
+        "follow_up_context: active for this session",
+        "follow_up_boundary: read follow-ups allowed; writes require approval",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("# Google Sheets summary from session context");
+    expect(reply?.content).toContain("Range: Sheet1!A1:Z20");
+    expect(reply?.content).toContain("Shape: 20 rows x 8 columns");
+    expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway sheets_read_range result");
+    expect(reply?.content).not.toMatch(/haven.t shared|paste the link|can't access|cannot access|Bearer|access_token|customer@example.com/i);
+  });
+
+  it("requires a new approval for Google Sheets mutation follow-ups instead of reusing the read context", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("write follow-up must not silently execute through the previous read lease");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "append a new row to this sheet with status pass",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      conversationText: [
+        "source: authorized Google Sheets read",
+        "range: Sheet1!A1:Z20",
+        "rowCount: 20",
+        "columnCount: 8",
+        "follow_up_context: active for this session",
+        "follow_up_boundary: read follow-ups allowed; writes require approval",
+      ].join("\n"),
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & { conversationText: string });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(reply?.content).toContain("Google Sheets write/update requires a new approval");
+    expect(reply?.content).toContain("Previous session context only authorizes read follow-ups");
+    expect(reply?.content).toContain("source: previous redacted AgentNexus Tool Gateway sheets_read_range result");
+    expect(reply?.content).not.toMatch(/write_status:\s*executed|Bearer|access_token|customer@example.com/i);
   });
 
   it("formats governed skill results without leaking raw skill metadata", () => {
