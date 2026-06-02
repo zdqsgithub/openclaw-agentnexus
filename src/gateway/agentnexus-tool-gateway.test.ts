@@ -703,6 +703,139 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).toContain("source_url: https://example.com/agent-governance");
   });
 
+  it("includes redacted channel draft context in the runtime acknowledgement phrase", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          manifest: {
+            tools: [
+              {
+                name: "channel_publish_preview",
+                riskDisclosure: {
+                  riskTier: "high",
+                  warningMode: "warn_then_execute_when_eligible",
+                  acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                  userAcknowledgementRequired: true,
+                  riskFeeBillingState: "configured_not_charged",
+                  disclaimer:
+                    "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                  hardBlockAfterAcknowledgement: false,
+                },
+              },
+            ],
+          },
+        },
+      }),
+    })) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Create a governed channel relay notification preview through AgentNexus Tool Gateway.",
+        "Use channel_publish_preview.",
+        "Channel type webhook.",
+        "Draft title: AgentC governed channel relay QA.",
+        "Draft body: Private payload must stay redacted.",
+        "Draft summary: Synthetic AgentC channel relay notification.",
+        "Do not send the webhook from the runtime.",
+      ].join(" "),
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("## Native tool acknowledgement required");
+    expect(reply?.content).toContain(
+      "`I acknowledge AgentC native risk and run channel_publish_preview for: title=AgentC governed channel relay QA; summary=Synthetic AgentC channel relay notification; body=redacted`",
+    );
+    expect(reply?.content).not.toContain("Private payload must stay redacted");
+  });
+
+  it("executes channel publish preview from the full acknowledgement phrase without conversation history", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "channel_publish_preview",
+                    riskDisclosure: {
+                      riskTier: "high",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      expect(init?.body).toEqual(expect.stringContaining('"tool":"channel_publish_preview"'));
+      expect(init?.body).toEqual(expect.stringContaining('"riskAcknowledgement":true'));
+      expect(init?.body).toEqual(expect.stringContaining('"title":"AgentC governed channel relay QA"'));
+      expect(init?.body).toEqual(expect.stringContaining('"summary":"Synthetic AgentC channel relay notification"'));
+      expect(init?.body).not.toContain("Private payload");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              provider: "channel_publish",
+              actionId: "webhook_send",
+              channelType: "webhook",
+              requiresApproval: true,
+              riskLabel: "approval_required",
+              redactedDraft: {
+                bodyPreview: "[redacted]",
+                payloadKeys: ["body", "summary", "title"],
+              },
+              target: { hostHash: "abc123hosthash", redacted: true },
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text:
+        "I acknowledge AgentC native risk and run channel_publish_preview for: title=AgentC governed channel relay QA; summary=Synthetic AgentC channel relay notification; body=redacted",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://agtnx.ai/api/runtime/tools/execute",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+        body: expect.stringContaining('"tool":"channel_publish_preview"'),
+      }),
+    );
+    expect(reply?.content).toContain("Channel Publish preview created through AgentNexus Tool Gateway.");
+    expect(reply?.content).toContain("target_host_hash: abc123hosthash");
+  });
+
   it("formats channel publish previews with approval and redacted target evidence", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
