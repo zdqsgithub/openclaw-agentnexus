@@ -101,7 +101,7 @@ function isBtwCommand(text: string) {
 function isAgentCRuntimeRiskAcknowledgement(text: string) {
   const normalized = normalizeLowercaseStringOrEmpty(text);
   return (
-    /\bruntime_skill_execute\b/.test(normalized) &&
+    /\bi acknowledge agentc native risk and run [a-z0-9_:-]+\b/.test(normalized) &&
     /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(normalized) &&
     /\b(agentc native risk|native risk|risk disclosure|tool risk)\b/.test(normalized)
   );
