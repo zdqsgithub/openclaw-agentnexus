@@ -305,6 +305,19 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
       },
     };
   }
+  const acknowledgedChannelPublishDraft = acknowledgedTool === "channel_publish_preview"
+    ? readAcknowledgedChannelPublishDraft(options.text)
+    : null;
+  if (acknowledgedChannelPublishDraft) {
+    return {
+      tool: "channel_publish_preview",
+      intent: "channel_publish_preview",
+      args: {
+        channelType: "webhook",
+        draft: acknowledgedChannelPublishDraft,
+      },
+    };
+  }
   if (!options.conversationText) {
     return null;
   }
@@ -322,6 +335,27 @@ function readAcknowledgedWebSearchQuery(text: string): string | null {
   const match = text.match(/\brun\s+web_search\s+for:\s*([\s\S]+)$/i);
   const query = sanitizeOneLine(match?.[1] ?? "", 500);
   return query || null;
+}
+
+function readAcknowledgedChannelPublishDraft(text: string): { title: string; body: string; summary: string } | null {
+  const match = text.match(/\brun\s+channel_publish_preview\s+for:\s*([\s\S]+)$/i);
+  const payload = match?.[1] ?? "";
+  const title = readAcknowledgedField(payload, "title", 120) || "AgentC governed channel relay notification";
+  const summary = readAcknowledgedField(payload, "summary", 180) || "Synthetic AgentC channel relay notification.";
+  const bodyMarker = readAcknowledgedField(payload, "body", 80);
+  if (!title && !summary && !bodyMarker) {
+    return null;
+  }
+  return {
+    title,
+    body: "Redacted channel relay body omitted from acknowledgement phrase.",
+    summary,
+  };
+}
+
+function readAcknowledgedField(payload: string, name: string, maxLength: number) {
+  const match = payload.match(new RegExp(`(?:^|;)\\s*${escapeRegExp(name)}\\s*=\\s*([^;]+)`, "i"));
+  return sanitizeOneLine(match?.[1] ?? "", maxLength);
 }
 
 function readAcknowledgedRuntimeToolName(text: string): RuntimeToolName | null {
@@ -914,6 +948,18 @@ function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolReques
   const base = `I acknowledge AgentC native risk and run ${request.tool}`;
   if (request.tool === "web_search" && typeof request.args.query === "string" && request.args.query.trim()) {
     return `${base} for: ${sanitizeOneLine(request.args.query, 500)}`;
+  }
+  if (request.tool === "channel_publish_preview") {
+    const draft = request.args.draft && typeof request.args.draft === "object" && !Array.isArray(request.args.draft)
+      ? request.args.draft as Record<string, unknown>
+      : {};
+    const title = typeof draft.title === "string" && draft.title.trim()
+      ? sanitizeOneLine(draft.title, 120)
+      : "AgentC governed channel relay notification";
+    const summary = typeof draft.summary === "string" && draft.summary.trim()
+      ? sanitizeOneLine(draft.summary, 180)
+      : "Synthetic AgentC channel relay notification";
+    return `${base} for: title=${title}; summary=${summary}; body=redacted`;
   }
   return base;
 }
