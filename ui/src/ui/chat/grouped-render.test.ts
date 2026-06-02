@@ -308,6 +308,61 @@ describe("grouped chat rendering", () => {
     expect(card?.textContent).toContain("no active insurance, warranty, underwriting, indemnity, or payout coverage");
   });
 
+  it("exposes native continue and cancel actions for AgentC runtime risk acknowledgement cards", () => {
+    const container = document.createElement("div");
+    const onContinue = vi.fn();
+    const onCancel = vi.fn();
+
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "## Native tool acknowledgement required",
+              "",
+              "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk.",
+              "",
+              "### Native tool risk disclosure",
+              "",
+              "- **Risk tier (`risk_tier`):** medium",
+              "- **Risk fee state (`risk_fee_billing_state`):** configured, not charged",
+              "- **Disclaimer:** governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
+              "- **Action:** `runtime_skill_execute`",
+              "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+              "",
+              "**To continue, reply:** `I acknowledge AgentC native risk and run runtime_skill_execute`",
+            ].join("\n"),
+          },
+        ],
+      },
+      {
+        onRiskAcknowledgementContinue: onContinue,
+        onRiskAcknowledgementCancel: onCancel,
+      } as Partial<RenderMessageGroupOptions>,
+    );
+
+    const continueButton = container.querySelector<HTMLButtonElement>(
+      '[data-agentc-runtime-risk-ack-continue="true"]',
+    );
+    const cancelButton = container.querySelector<HTMLButtonElement>(
+      '[data-agentc-runtime-risk-ack-cancel="true"]',
+    );
+
+    expect(continueButton).not.toBeNull();
+    expect(cancelButton).not.toBeNull();
+
+    continueButton?.click();
+    cancelButton?.click();
+
+    expect(onContinue).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run runtime_skill_execute",
+    );
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("positions delete confirm by message side", () => {
     const container = document.createElement("div");
     clearDeleteConfirmSkip();

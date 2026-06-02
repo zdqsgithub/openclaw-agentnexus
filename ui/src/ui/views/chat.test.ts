@@ -16,6 +16,7 @@ import { renderChatSessionSelect } from "../chat/session-controls.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
 import type { ModelCatalogEntry } from "../types.ts";
 import type { ChatQueueItem } from "../ui-types.ts";
+import { renderChat, type ChatProps } from "./chat.ts";
 
 const refreshVisibleToolsEffectiveForCurrentSessionMock = vi.hoisted(() =>
   vi.fn(async (state: AppViewState) => {
@@ -102,6 +103,68 @@ function renderQueue(params: {
     container,
   );
   return container;
+}
+
+function createRiskAcknowledgementChatProps(
+  overrides: Partial<ChatProps> = {},
+): ChatProps {
+  const acknowledgementMarkdown = [
+    "## Native tool acknowledgement required",
+    "",
+    "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk.",
+    "",
+    "### Native tool risk disclosure",
+    "",
+    "- **Risk tier (`risk_tier`):** medium",
+    "- **Risk fee state (`risk_fee_billing_state`):** configured, not charged",
+    "- **Disclaimer:** governance evidence only; no active insurance, warranty, underwriting, indemnity, or payout coverage",
+    "- **Action:** `runtime_skill_execute`",
+    "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+    "",
+    "**To continue, reply:** `I acknowledge AgentC native risk and run runtime_skill_execute`",
+  ].join("\n");
+
+  return {
+    sessionKey: "main",
+    onSessionKeyChange: () => undefined,
+    thinkingLevel: null,
+    showThinking: true,
+    showToolCalls: true,
+    loading: false,
+    sending: false,
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: acknowledgementMarkdown }],
+        timestamp: Date.UTC(2026, 5, 1, 12, 0, 0),
+      },
+    ],
+    sideResult: null,
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    draft: "",
+    queue: [],
+    connected: true,
+    canSend: true,
+    disabledReason: null,
+    error: null,
+    sessions: createSessionsListResult({}),
+    focusMode: false,
+    assistantName: "AgentC",
+    assistantAvatar: null,
+    onRefresh: () => undefined,
+    onToggleFocusMode: () => undefined,
+    onDraftChange: () => undefined,
+    onSend: () => undefined,
+    onQueueRemove: () => undefined,
+    onNewSession: () => undefined,
+    agentsList: null,
+    currentAgentId: "main",
+    onAgentChange: () => undefined,
+    ...overrides,
+  };
 }
 
 function createChatHeaderState(
@@ -261,6 +324,44 @@ describe("chat queue", () => {
     });
 
     expect(inactiveContainer.querySelector(".chat-queue__steer")).toBeNull();
+  });
+});
+
+describe("AgentC runtime risk acknowledgement", () => {
+  it("continues native tool execution through an explicit acknowledgement action", () => {
+    const container = document.createElement("div");
+    const onSendText = vi.fn();
+    const onSend = vi.fn();
+
+    render(
+      renderChat(
+        createRiskAcknowledgementChatProps({
+          onSend,
+          onSendText,
+        }),
+      ),
+      container,
+    );
+
+    const continueButton = container.querySelector<HTMLButtonElement>(
+      '[data-agentc-runtime-risk-ack-continue="true"]',
+    );
+    const cancelButton = container.querySelector<HTMLButtonElement>(
+      '[data-agentc-runtime-risk-ack-cancel="true"]',
+    );
+
+    expect(continueButton).not.toBeNull();
+    expect(cancelButton).not.toBeNull();
+
+    continueButton?.click();
+
+    expect(onSendText).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run runtime_skill_execute",
+    );
+    expect(onSend).not.toHaveBeenCalled();
+
+    cancelButton?.click();
+    expect(onSendText).toHaveBeenCalledTimes(1);
   });
 });
 

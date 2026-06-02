@@ -220,6 +220,41 @@
   font-size: 12px;
 }
 
+.agentc-runtime-risk-ack-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agentc-runtime-risk-ack-card__button {
+  appearance: none;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, #0ea5e9 28%);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.agentc-runtime-risk-ack-card__button:hover {
+  border-color: color-mix(in srgb, #0ea5e9 65%, var(--border));
+}
+
+.agentc-runtime-risk-ack-card__button--primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.agentc-runtime-risk-ack-card__button--primary:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
 :root:not([data-theme-mode="light"]) .agentc-runtime-risk-ack-card__eyebrow {
   color: #fbbf24;
 }
@@ -227,6 +262,18 @@
 :root:not([data-theme-mode="light"]) .agentc-runtime-risk-ack-card__grid > div,
 :root:not([data-theme-mode="light"]) .agentc-runtime-risk-ack-card__phrase {
   background: rgba(255, 255, 255, 0.05);
+}
+
+:root:not([data-theme-mode="light"]) .agentc-runtime-risk-ack-card__button {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text);
+}
+
+:root:not([data-theme-mode="light"]) .agentc-runtime-risk-ack-card__button--primary {
+  background: #2563eb;
+  border-color: #60a5fa;
+  color: #fff;
 }
 
 /* =============================================
