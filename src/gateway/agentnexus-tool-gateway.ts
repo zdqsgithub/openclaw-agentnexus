@@ -49,6 +49,18 @@ export type AgentNexusRuntimeRiskDisclosure = {
   hardBlockAfterAcknowledgement?: boolean;
 };
 
+type AgentNexusRuntimeRiskWarningUi = {
+  component: "native_tool_warning_ack_modal";
+  title?: string;
+  riskTier?: string;
+  toolId?: string;
+  actionLabel?: string;
+  acknowledgementPhrase?: string;
+  disclaimer?: string;
+  riskFeeBillingState?: string;
+  redacted: true;
+};
+
 export type AgentNexusRuntimeDirectChatConfig = {
   apiKey: string;
   apiUrl: string;
@@ -484,6 +496,16 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
     const code = typeof params.result.body.code === "string"
       ? params.result.body.code
       : "RUNTIME_TOOL_FAILED";
+    const runtimeUi = code === "RUNTIME_TOOL_RISK_ACK_REQUIRED"
+      ? readRuntimeRiskWarningUi(params.result.body)
+      : null;
+    if (runtimeUi) {
+      return formatRuntimeAcknowledgementPrompt(
+        params.request,
+        runtimeUiToRiskDisclosure(runtimeUi),
+        runtimeUi.acknowledgementPhrase,
+      );
+    }
     const error = typeof params.result.body.error === "string"
       ? params.result.body.error
       : "AgentNexus Tool Gateway could not complete the request.";
@@ -837,6 +859,67 @@ function findRuntimeToolRiskDisclosure(
   return null;
 }
 
+function readRuntimeRiskWarningUi(body: Record<string, unknown>): AgentNexusRuntimeRiskWarningUi | null {
+  const candidates = [
+    body.runtimeUi,
+    readNestedRuntimeUi(body.riskWarning),
+    readNestedRuntimeUi(body.responseSummary),
+    readNestedRuntimeUi(body.data),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      continue;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (record.component !== "native_tool_warning_ack_modal" || record.redacted !== true) {
+      continue;
+    }
+    const riskFeePreview = record.riskFeePreview &&
+        typeof record.riskFeePreview === "object" &&
+        !Array.isArray(record.riskFeePreview)
+      ? record.riskFeePreview as Record<string, unknown>
+      : {};
+    const acknowledgementPhrase = typeof record.acknowledgementPhrase === "string"
+      ? sanitizeOneLine(record.acknowledgementPhrase, 600)
+      : undefined;
+    return {
+      component: "native_tool_warning_ack_modal",
+      ...(typeof record.title === "string" ? { title: sanitizeOneLine(record.title, 120) } : {}),
+      ...(typeof record.riskTier === "string" ? { riskTier: sanitizeOneLine(record.riskTier, 80) } : {}),
+      ...(typeof record.toolId === "string" ? { toolId: sanitizeOneLine(record.toolId, 80) } : {}),
+      ...(typeof record.actionLabel === "string" ? { actionLabel: sanitizeOneLine(record.actionLabel, 120) } : {}),
+      ...(acknowledgementPhrase ? { acknowledgementPhrase } : {}),
+      ...(typeof record.disclaimer === "string" ? { disclaimer: sanitizeOneLine(record.disclaimer, 240) } : {}),
+      ...(typeof riskFeePreview.billingState === "string"
+        ? { riskFeeBillingState: sanitizeOneLine(riskFeePreview.billingState, 120) }
+        : {}),
+      redacted: true,
+    };
+  }
+  return null;
+}
+
+function readNestedRuntimeUi(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.runtimeUi ?? readNestedRuntimeUi(record.riskWarning);
+}
+
+function runtimeUiToRiskDisclosure(ui: AgentNexusRuntimeRiskWarningUi): AgentNexusRuntimeRiskDisclosure {
+  return {
+    ...(ui.riskTier ? { riskTier: ui.riskTier } : {}),
+    warningMode: "warn_then_execute_when_eligible",
+    acknowledgementSurface: "agentc_runtime_prompt",
+    userAcknowledgementRequired: true,
+    riskFeeBillingState: ui.riskFeeBillingState ?? "configured_not_charged",
+    disclaimer: ui.disclaimer ??
+      "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+    hardBlockAfterAcknowledgement: false,
+  };
+}
+
 function readRuntimeManifest(body: unknown): Record<string, unknown> | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return null;
@@ -927,6 +1010,7 @@ function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): 
 function formatRuntimeAcknowledgementPrompt(
   request: AgentNexusRuntimeToolRequest,
   disclosure: AgentNexusRuntimeRiskDisclosure | null | undefined,
+  acknowledgementPhrase?: string,
 ) {
   const riskBlock = formatRuntimeRiskDisclosureBlock(disclosure);
   return [
@@ -940,7 +1024,7 @@ function formatRuntimeAcknowledgementPrompt(
     "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
     "- **Acknowledgement effect:** action will run after explicit acknowledgement; no hidden block is applied",
     "",
-    `**To continue, reply:** \`${formatRuntimeAcknowledgementPhrase(request)}\``,
+    `**To continue, reply:** \`${acknowledgementPhrase ?? formatRuntimeAcknowledgementPhrase(request)}\``,
   ].join("\n");
 }
 

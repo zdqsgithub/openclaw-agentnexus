@@ -425,6 +425,97 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
+  it("renders Tool Gateway runtimeUi risk acknowledgement responses as native card markdown", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "web_search",
+                    riskDisclosure: {
+                      riskTier: "high",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: false,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          error: "Native tool risk acknowledgement required.",
+          riskWarning: {
+            runtimeUi: {
+              component: "native_tool_warning_ack_modal",
+              title: "Native tool acknowledgement required",
+              riskTier: "high",
+              capabilityId: "broad_web_fetch",
+              toolId: "web_search",
+              actionLabel: "web_search",
+              acknowledgementPhrase:
+                "I acknowledge AgentC native risk and run web_search",
+              continueAction: {
+                mode: "retry_with_runtime_acknowledgement",
+                riskAcknowledgementArgument: "riskAcknowledgement",
+              },
+              cancelAction: { mode: "dismiss_without_execution" },
+              revokeAction: { mode: "open_agentnexus_kill_switch" },
+              disclaimer:
+                "This acknowledgement records consent to proceed through AgentNexus governance; it does not create insurance, warranty, underwriting, indemnity, or payout coverage.",
+              riskFeePreview: {
+                capabilityId: "broad_web_fetch",
+                riskTier: "high",
+                riskFeeUnits: 25,
+                currency: "usage_credits",
+                billingState: "configured_not_charged",
+                activeInsuranceProduct: false,
+                warrantyOrPayoutPromise: false,
+                redacted: true,
+              },
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Search the web for current agent governance news and include source URLs.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("## Native tool acknowledgement required");
+    expect(reply?.content).toContain("**Risk tier (`risk_tier`):** high");
+    expect(reply?.content).toContain("**Risk fee state (`risk_fee_billing_state`):** configured, not charged");
+    expect(reply?.content).toContain("**Action:** `web_search`");
+    expect(reply?.content).toContain("execution_status: waiting_for_user_acknowledgement");
+    expect(reply?.content).toContain("`I acknowledge AgentC native risk and run web_search`");
+    expect(reply?.content).not.toContain("AgentNexus Tool Gateway returned RUNTIME_TOOL_RISK_ACK_REQUIRED");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
   it("executes governed skills after the native runtime Continue acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async (url: string | URL | Request) => {
       const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
