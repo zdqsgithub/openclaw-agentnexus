@@ -533,6 +533,21 @@ function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest |
   }
 
   const lower = text.toLowerCase();
+  if (
+    /\bruntime_skill_execute\b/.test(lower) &&
+    /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(lower) &&
+    /\b(agentc native risk|native risk|risk disclosure|tool risk)\b/.test(lower)
+  ) {
+    return {
+      tool: "runtime_skill_execute",
+      intent: "governed_skill",
+      args: {
+        skillId: readGovernedSkillId(text) ?? "demo-summary-style",
+        input: text.slice(0, 1_000),
+      },
+    };
+  }
+
   if (/\b(governed skill|runtime skill|demo-summary-style|summary skill|weather skill)\b/.test(lower)) {
     return {
       tool: "runtime_skill_execute",
@@ -545,6 +560,11 @@ function parseGovernedSkillRequest(text: string): AgentNexusRuntimeToolRequest |
   }
 
   return null;
+}
+
+function readGovernedSkillId(text: string): string | null {
+  const match = text.match(/\bskill[_\s-]?id\b[:\s]+`?([a-z0-9][a-z0-9-]{2,80})`?/i);
+  return match?.[1]?.toLowerCase() ?? null;
 }
 
 function parseGovernedCronRequest(text: string): AgentNexusRuntimeToolRequest | null {
