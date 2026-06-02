@@ -101,6 +101,7 @@ export type ChatProps = {
   onDraftChange: (next: string) => void;
   onRequestUpdate?: () => void;
   onSend: () => void;
+  onSendText?: (text: string) => void;
   onCompact?: () => void | Promise<void>;
   onToggleRealtimeTalk?: () => void;
   onAbort?: () => void;
@@ -871,6 +872,18 @@ export function renderChat(props: ChatProps) {
                 allowExternalEmbedUrls: props.allowExternalEmbedUrls ?? false,
                 contextWindow:
                   activeSession?.contextTokens ?? props.sessions?.defaults?.contextTokens ?? null,
+                onRiskAcknowledgementContinue: (phrase: string) => {
+                  if (props.onSendText) {
+                    props.onSendText(phrase);
+                    return;
+                  }
+                  props.onDraftChange(phrase);
+                  props.onRequestUpdate?.();
+                },
+                onRiskAcknowledgementCancel: () => {
+                  props.onDraftChange("");
+                  props.onRequestUpdate?.();
+                },
                 onDelete: () => {
                   deleted.delete(item.key);
                   requestUpdate();

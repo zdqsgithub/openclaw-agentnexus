@@ -111,7 +111,16 @@ function extractRuntimeAcknowledgementPhrase(markdown: string): string {
     "I acknowledge AgentC native risk and run the requested tool";
 }
 
-function renderChatMarkdown(markdown: string, normalizedRole: string) {
+type RuntimeRiskAcknowledgementActions = {
+  onRiskAcknowledgementContinue?: (phrase: string) => void;
+  onRiskAcknowledgementCancel?: () => void;
+};
+
+function renderChatMarkdown(
+  markdown: string,
+  normalizedRole: string,
+  actions: RuntimeRiskAcknowledgementActions = {},
+) {
   const body = html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
     ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
   </div>`;
@@ -119,6 +128,8 @@ function renderChatMarkdown(markdown: string, normalizedRole: string) {
   if (!isAgentCRuntimeRiskAcknowledgementMarkdown(markdown, normalizedRole)) {
     return body;
   }
+
+  const acknowledgementPhrase = extractRuntimeAcknowledgementPhrase(markdown);
 
   return html`
     <section class="agentc-runtime-risk-ack-card" data-agentc-runtime-risk-ack-card="true">
@@ -137,7 +148,25 @@ function renderChatMarkdown(markdown: string, normalizedRole: string) {
         </div>
       </div>
       <div class="agentc-runtime-risk-ack-card__phrase" data-agentc-runtime-risk-ack-phrase="true">
-        ${extractRuntimeAcknowledgementPhrase(markdown)}
+        ${acknowledgementPhrase}
+      </div>
+      <div class="agentc-runtime-risk-ack-card__actions" data-agentc-runtime-risk-ack-actions="true">
+        <button
+          type="button"
+          class="agentc-runtime-risk-ack-card__button agentc-runtime-risk-ack-card__button--primary"
+          data-agentc-runtime-risk-ack-continue="true"
+          @click=${() => actions.onRiskAcknowledgementContinue?.(acknowledgementPhrase)}
+        >
+          Continue with acknowledgement
+        </button>
+        <button
+          type="button"
+          class="agentc-runtime-risk-ack-card__button"
+          data-agentc-runtime-risk-ack-cancel="true"
+          @click=${() => actions.onRiskAcknowledgementCancel?.()}
+        >
+          Cancel
+        </button>
       </div>
       ${body}
     </section>
@@ -390,6 +419,8 @@ export function renderMessageGroup(
     embedSandboxMode?: EmbedSandboxMode;
     allowExternalEmbedUrls?: boolean;
     contextWindow?: number | null;
+    onRiskAcknowledgementContinue?: (phrase: string) => void;
+    onRiskAcknowledgementCancel?: () => void;
     onDelete?: () => void;
   },
 ) {
@@ -455,6 +486,8 @@ export function renderMessageGroup(
               localMediaPreviewRoots: opts.localMediaPreviewRoots,
               assistantAttachmentAuthToken: opts.assistantAttachmentAuthToken,
               embedSandboxMode: opts.embedSandboxMode,
+              onRiskAcknowledgementContinue: opts.onRiskAcknowledgementContinue,
+              onRiskAcknowledgementCancel: opts.onRiskAcknowledgementCancel,
             },
             opts.onOpenSidebar,
           ),
@@ -1325,6 +1358,8 @@ function renderGroupedMessage(
     assistantAttachmentAuthToken?: string | null;
     embedSandboxMode?: EmbedSandboxMode;
     allowExternalEmbedUrls?: boolean;
+    onRiskAcknowledgementContinue?: (phrase: string) => void;
+    onRiskAcknowledgementCancel?: () => void;
   },
   onOpenSidebar?: (content: SidebarContent) => void,
 ) {
@@ -1478,7 +1513,10 @@ function renderGroupedMessage(
                             <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                           </details>`
                         : markdown
-                          ? renderChatMarkdown(markdown, normalizedRole)
+                          ? renderChatMarkdown(markdown, normalizedRole, {
+                              onRiskAcknowledgementContinue: opts.onRiskAcknowledgementContinue,
+                              onRiskAcknowledgementCancel: opts.onRiskAcknowledgementCancel,
+                            })
                           : nothing}
                       ${hasToolCards
                         ? singleToolCard && !markdown && !hasImages
@@ -1538,7 +1576,10 @@ function renderGroupedMessage(
                   <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                 </details>`
               : markdown
-                ? renderChatMarkdown(markdown, normalizedRole)
+                ? renderChatMarkdown(markdown, normalizedRole, {
+                    onRiskAcknowledgementContinue: opts.onRiskAcknowledgementContinue,
+                    onRiskAcknowledgementCancel: opts.onRiskAcknowledgementCancel,
+                  })
                 : nothing}
             ${hasToolCards
               ? renderInlineToolCards(toolCards, {
