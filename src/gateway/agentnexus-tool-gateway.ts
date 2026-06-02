@@ -203,6 +203,14 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   signal?: AbortSignal;
   conversationText?: string;
 }): Promise<AgentNexusRuntimeTextReply | null> {
+  const previousGoogleSheetsReply = buildPreviousGoogleSheetsFollowUpReply(options.text, options.conversationText);
+  if (previousGoogleSheetsReply) {
+    return {
+      adapter: "agentnexus-tool-gateway",
+      content: previousGoogleSheetsReply,
+    };
+  }
+
   const previousSearchSummary = buildPreviousSearchSummaryReply(options.text, options.conversationText);
   if (previousSearchSummary) {
     return {
@@ -340,7 +348,7 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
     return null;
   }
   const priorUserMessages = extractPriorRuntimeUserMessages(options.conversationText);
-  for (const message of priorUserMessages.reverse()) {
+  for (const message of priorUserMessages.toReversed()) {
     const request = resolveAgentNexusRuntimeToolRequest(message, options.now);
     if (request?.tool === acknowledgedTool) {
       return request;
@@ -890,6 +898,17 @@ function readToolResult(body: Record<string, unknown>) {
   return (data as { result?: unknown }).result;
 }
 
+function readRuntimeSessionGovernance(body: Record<string, unknown>) {
+  const data = body.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const governance = (data as { sessionGovernance?: unknown }).sessionGovernance;
+  return governance && typeof governance === "object" && !Array.isArray(governance)
+    ? governance as Record<string, unknown>
+    : null;
+}
+
 function findRuntimeToolRiskDisclosure(
   body: unknown,
   toolName: RuntimeToolName,
@@ -1225,13 +1244,38 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
   const source = typeof record.source === "string" && /\b(?:authorized|public) Google Sheets read\b/i.test(record.source)
     ? sanitizeOneLine(record.source, 80)
     : "authorized Google Sheets read";
-  return [
+  const lines = [
     `source: ${source}`,
     `range: ${range}`,
     `rowCount: ${rowCount}`,
     `columnCount: ${columnCount}`,
     ...(args.requestedWrite === true ? ["write_status: approval_required"] : []),
-  ].join("\n");
+  ];
+  if (hasRuntimeSessionFollowUpGrounding(body)) {
+    lines.push(
+      "follow_up_context: active for this session",
+      "follow_up_boundary: read follow-ups allowed; writes require approval",
+    );
+  }
+  return lines.join("\n");
+}
+
+function hasRuntimeSessionFollowUpGrounding(body: Record<string, unknown>) {
+  const governance = readRuntimeSessionGovernance(body);
+  if (!governance) {
+    return false;
+  }
+  const followUpGrounding = governance.followUpGrounding;
+  const toolContext = governance.toolContext;
+  if (!followUpGrounding || typeof followUpGrounding !== "object" || Array.isArray(followUpGrounding)) {
+    return false;
+  }
+  if (!toolContext || typeof toolContext !== "object" || Array.isArray(toolContext)) {
+    return false;
+  }
+  return (followUpGrounding as { enabled?: unknown }).enabled === true &&
+    (toolContext as { rawPayloadStored?: unknown; redacted?: unknown }).rawPayloadStored === false &&
+    (toolContext as { redacted?: unknown }).redacted === true;
 }
 
 function formatRuntimeCronRequestAnswer(body: Record<string, unknown>, args: Record<string, unknown>) {
@@ -1418,6 +1462,143 @@ function extractFormattedGitHubRepoEvidence(text: string) {
 function readPrefixedValue(text: string, key: string) {
   const match = text.match(new RegExp(`^${key}:\\s*(.+)$`, "im"));
   return match?.[1]?.trim() || "";
+}
+
+function buildPreviousGoogleSheetsFollowUpReply(text: string, conversationText: string | undefined) {
+  if (extractGoogleSheetsSpreadsheetId(text) || !isGoogleSheetsFollowUpIntent(text)) {
+    return null;
+  }
+  if (!conversationText || !/\bsource:\s*(?:authorized|public) Google Sheets read\b/i.test(conversationText)) {
+    return null;
+  }
+  const evidence = extractFormattedGoogleSheetsEvidence(conversationText);
+  if (!evidence) {
+    return null;
+  }
+  if (isGoogleSheetsMutationFollowUp(text)) {
+    return formatPreviousGoogleSheetsMutationBoundary(evidence);
+  }
+  return formatPreviousGoogleSheetsSummary(evidence, text);
+}
+
+function isGoogleSheetsFollowUpIntent(text: string) {
+  const lower = text.toLowerCase();
+  return /\b(sheet|sheets|spreadsheet|googlesheet|google sheet|this|that|it|previous|result|contain|contains|summary|summarize|summarise|column|columns|row|rows|data)\b/.test(lower) &&
+    /\b(what|contain|contains|summary|summarize|summarise|describe|explain|detail|detailed|column|columns|row|rows|data|write|update|append|insert|edit|modify|delete|change)\b/.test(lower);
+}
+
+function isGoogleSheetsMutationFollowUp(text: string) {
+  return /\b(write|update|delete|remove|append|insert|modify|edit|change|create\s+(?:a\s+)?(?:row|record|entry)|add\s+(?:a\s+)?row)\b/i.test(text);
+}
+
+function extractFormattedGoogleSheetsEvidence(text: string) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let evidence: {
+    source: string;
+    range: string;
+    rowCount: number | null;
+    columnCount: number | null;
+    followUpContextActive: boolean;
+    followUpBoundary: string;
+  } | null = null;
+  for (const line of lines) {
+    const sourceMatch = line.match(/^source:\s*((?:authorized|public) Google Sheets read)$/i);
+    if (sourceMatch) {
+      evidence = {
+        source: sanitizeOneLine(sourceMatch[1] ?? "authorized Google Sheets read", 80),
+        range: "unknown",
+        rowCount: null,
+        columnCount: null,
+        followUpContextActive: false,
+        followUpBoundary: "read follow-ups allowed; writes require approval",
+      };
+      continue;
+    }
+    if (!evidence) {
+      continue;
+    }
+    const range = line.match(/^range:\s*(.+)$/i);
+    if (range) {
+      evidence.range = sanitizeOneLine(range[1] ?? "", 120) || "unknown";
+      continue;
+    }
+    const rowCount = line.match(/^rowCount:\s*(\d+)$/i);
+    if (rowCount) {
+      evidence.rowCount = Number.parseInt(rowCount[1] ?? "0", 10);
+      continue;
+    }
+    const columnCount = line.match(/^columnCount:\s*(\d+)$/i);
+    if (columnCount) {
+      evidence.columnCount = Number.parseInt(columnCount[1] ?? "0", 10);
+      continue;
+    }
+    const followUpContext = line.match(/^follow_up_context:\s*(.+)$/i);
+    if (followUpContext) {
+      evidence.followUpContextActive = /active/i.test(followUpContext[1] ?? "");
+      continue;
+    }
+    const followUpBoundary = line.match(/^follow_up_boundary:\s*(.+)$/i);
+    if (followUpBoundary) {
+      evidence.followUpBoundary = sanitizeOneLine(followUpBoundary[1] ?? "", 180) ||
+        "read follow-ups allowed; writes require approval";
+    }
+  }
+  return evidence && evidence.range !== "unknown" ? evidence : null;
+}
+
+function formatPreviousGoogleSheetsSummary(
+  evidence: {
+    source: string;
+    range: string;
+    rowCount: number | null;
+    columnCount: number | null;
+    followUpContextActive: boolean;
+    followUpBoundary: string;
+  },
+  text: string,
+) {
+  const shape = evidence.rowCount !== null && evidence.columnCount !== null
+    ? `${evidence.rowCount} rows x ${evidence.columnCount} columns`
+    : "redacted shape metadata unavailable";
+  const wantsOneSentence = /\bone[-\s]?sentence\b/i.test(text);
+  if (wantsOneSentence) {
+    return [
+      `The previous Google Sheets read exposed a redacted ${shape} metadata view of ${evidence.range} from ${evidence.source}; raw cell values and credentials were not exposed.`,
+      "",
+      "source: previous redacted AgentNexus Tool Gateway sheets_read_range result",
+    ].join("\n");
+  }
+  return [
+    "# Google Sheets summary from session context",
+    "",
+    `- Source: ${evidence.source}`,
+    `- Range: ${evidence.range}`,
+    `- Shape: ${shape}`,
+    `- Follow-up context: ${evidence.followUpContextActive ? "active for this session" : "available from the visible redacted result"}`,
+    `- Boundary: ${evidence.followUpBoundary}`,
+    "- Redacted interpretation: AgentC can answer read-only follow-ups from this session context, but the runtime transcript does not contain raw cell values, emails, OAuth tokens, provider keys, or spreadsheet credentials.",
+    "",
+    "source: previous redacted AgentNexus Tool Gateway sheets_read_range result",
+  ].join("\n");
+}
+
+function formatPreviousGoogleSheetsMutationBoundary(evidence: {
+  source: string;
+  range: string;
+  rowCount: number | null;
+  columnCount: number | null;
+}) {
+  const shape = evidence.rowCount !== null && evidence.columnCount !== null
+    ? `${evidence.rowCount} rows x ${evidence.columnCount} columns`
+    : "redacted shape metadata";
+  return [
+    "Google Sheets write/update requires a new approval.",
+    "",
+    `Previous session context only authorizes read follow-ups for ${evidence.range} (${shape}) from ${evidence.source}.`,
+    "To modify the sheet, use an explicit AgentNexus Google Workspace approval-write flow; this runtime read context will not silently execute writes.",
+    "",
+    "source: previous redacted AgentNexus Tool Gateway sheets_read_range result",
+  ].join("\n");
 }
 
 function buildPreviousSearchSummaryReply(text: string, conversationText: string | undefined) {
