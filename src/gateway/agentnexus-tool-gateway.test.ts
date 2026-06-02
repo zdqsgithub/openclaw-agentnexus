@@ -876,6 +876,72 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
+  it("executes Google Sheets read from the full acknowledgement phrase without conversation history", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "sheets_read_range",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      expect(init?.body).toEqual(expect.stringContaining('"tool":"sheets_read_range"'));
+      expect(init?.body).toEqual(expect.stringContaining('"spreadsheetId":"1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg"'));
+      expect(init?.body).toEqual(expect.stringContaining('"riskAcknowledgement":true'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              source: "public Google Sheets read",
+              range: "Sheet1!A1:Z20",
+              rowCount: 4,
+              columnCount: 5,
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text:
+        "I acknowledge AgentC native risk and run sheets_read_range for: spreadsheet=1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg; range=Sheet1!A1:Z20",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("source: public Google Sheets read");
+    expect(reply?.content).toContain("rowCount: 4");
+    expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
   it("includes redacted channel draft context in the runtime acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,
