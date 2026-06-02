@@ -330,6 +330,12 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
       },
     };
   }
+  const acknowledgedGoogleSheetsRequest = acknowledgedTool === "sheets_read_range"
+    ? readAcknowledgedGoogleSheetsRequest(options.text)
+    : null;
+  if (acknowledgedGoogleSheetsRequest) {
+    return acknowledgedGoogleSheetsRequest;
+  }
   if (!options.conversationText) {
     return null;
   }
@@ -362,6 +368,34 @@ function readAcknowledgedChannelPublishDraft(text: string): { title: string; bod
     title,
     body: "Redacted channel relay body omitted from acknowledgement phrase.",
     summary,
+  };
+}
+
+function readAcknowledgedGoogleSheetsRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const match = text.match(/\brun\s+sheets_read_range\s+for:\s*([\s\S]+)$/i);
+  const payload = match?.[1] ?? "";
+  if (!payload.trim()) {
+    return null;
+  }
+  const spreadsheetInput = readAcknowledgedField(payload, "spreadsheet", 180) ||
+    readAcknowledgedField(payload, "spreadsheetId", 120) ||
+    readAcknowledgedField(payload, "url", 240);
+  const spreadsheetId = spreadsheetInput
+    ? extractGoogleSheetsSpreadsheetId(spreadsheetInput) || sanitizeGoogleSheetsSpreadsheetId(spreadsheetInput)
+    : null;
+  if (!spreadsheetId) {
+    return null;
+  }
+  const range = readAcknowledgedField(payload, "range", 120) || "Sheet1!A1:Z20";
+  return {
+    tool: "sheets_read_range",
+    intent: "google_sheets_read",
+    args: {
+      spreadsheetId,
+      range,
+      majorDimension: "ROWS",
+      requestedWrite: /\brequestedWrite\s*=\s*true\b/i.test(payload),
+    },
   };
 }
 
@@ -1074,6 +1108,18 @@ function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolReques
       : "Synthetic AgentC channel relay notification";
     return `${base} for: title=${title}; summary=${summary}; body=redacted`;
   }
+  if (request.tool === "sheets_read_range") {
+    const spreadsheetId = typeof request.args.spreadsheetId === "string"
+      ? sanitizeGoogleSheetsSpreadsheetId(request.args.spreadsheetId)
+      : null;
+    const range = typeof request.args.range === "string" && request.args.range.trim()
+      ? sanitizeOneLine(request.args.range, 120)
+      : "Sheet1!A1:Z20";
+    const requestedWrite = request.args.requestedWrite === true ? "; requestedWrite=true" : "";
+    if (spreadsheetId) {
+      return `${base} for: spreadsheet=${spreadsheetId}; range=${range}${requestedWrite}`;
+    }
+  }
   return base;
 }
 
@@ -1476,6 +1522,11 @@ function extractPublicGitHubRepoUrl(text: string) {
 function extractGoogleSheetsSpreadsheetId(text: string) {
   const match = text.match(/https:\/\/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})(?:[/?#][^\s)]*)?/i);
   return match?.[1] ?? null;
+}
+
+function sanitizeGoogleSheetsSpreadsheetId(value: string) {
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9_-]{20,160}$/.test(trimmed) ? trimmed : null;
 }
 
 function extractTextFromContent(content: unknown): string {
