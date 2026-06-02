@@ -425,6 +425,80 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
+  it("executes governed skills after the native runtime Continue acknowledgement phrase", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "runtime_skill_execute",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              skillStatus: "executed",
+              skillId: "demo-summary-style",
+              output: {
+                summary: "Demo-safe governed skill output.",
+                redacted: true,
+              },
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run runtime_skill_execute",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://agtnx.ai/api/runtime/tools/execute",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+        body: expect.stringContaining('"skillId":"demo-summary-style"'),
+      }),
+    );
+    expect(reply?.content).toContain("skill_status: executed");
+    expect(reply?.content).toContain("skill_id: demo-summary-style");
+    expect(reply?.content).toContain("source: AgentNexus governed skills catalog");
+    expect(reply?.content).not.toContain("Native tool acknowledgement required");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
   it("formats channel publish previews with approval and redacted target evidence", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
