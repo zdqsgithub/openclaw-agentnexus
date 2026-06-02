@@ -644,14 +644,17 @@ describe("handleSendChat", () => {
     ]);
   });
 
-  it("sends AgentC native risk acknowledgements immediately into the active run", async () => {
+  it.each([
+    "runtime_skill_execute",
+    "web_search",
+  ])("sends AgentC native risk acknowledgements for %s immediately into the active run", async (toolName) => {
     const request = vi.fn(async (method: string) => {
       if (method === "chat.send") {
         return { status: "started", runId: "risk-ack-run" };
       }
       throw new Error(`Unexpected request: ${method}`);
     });
-    const acknowledgement = "I acknowledge AgentC native risk and run runtime_skill_execute";
+    const acknowledgement = `I acknowledge AgentC native risk and run ${toolName}`;
     const host = makeHost({
       client: { request } as unknown as ChatHost["client"],
       chatRunId: "run-1",
