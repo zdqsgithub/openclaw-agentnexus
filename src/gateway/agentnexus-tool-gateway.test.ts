@@ -585,6 +585,124 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
+  it("includes the redacted web search query in the runtime acknowledgement phrase", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          manifest: {
+            tools: [
+              {
+                name: "web_search",
+                riskDisclosure: {
+                  riskTier: "medium",
+                  warningMode: "warn_then_execute_when_eligible",
+                  acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                  userAcknowledgementRequired: true,
+                  riskFeeBillingState: "configured_not_charged",
+                  disclaimer:
+                    "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                  hardBlockAfterAcknowledgement: false,
+                },
+              },
+            ],
+          },
+        },
+      }),
+    })) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Search the web for current agent governance news and include source URLs.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("## Native tool acknowledgement required");
+    expect(reply?.content).toContain(
+      "`I acknowledge AgentC native risk and run web_search for: Search the web for current agent governance news and include source URLs.`",
+    );
+  });
+
+  it("executes web search from the full runtime acknowledgement phrase without conversation history", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "web_search",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      expect(init?.body).toEqual(expect.stringContaining("current agent governance news"));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              provider: "web_search",
+              citations: [
+                {
+                  title: "Agent governance report",
+                  url: "https://example.com/agent-governance",
+                  snippet: "A public source about agent governance.",
+                },
+              ],
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text:
+        "I acknowledge AgentC native risk and run web_search for: Search the web for current agent governance news and include source URLs.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://agtnx.ai/api/runtime/tools/execute",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+        body: expect.stringContaining('"tool":"web_search"'),
+      }),
+    );
+    expect(reply?.content).toContain("Cited web search completed through AgentNexus Tool Gateway.");
+    expect(reply?.content).toContain("source_url: https://example.com/agent-governance");
+  });
+
   it("formats channel publish previews with approval and redacted target evidence", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {

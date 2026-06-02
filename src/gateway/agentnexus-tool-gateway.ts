@@ -285,11 +285,27 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
   conversationText?: string;
   now?: Date;
 }): AgentNexusRuntimeToolRequest | null {
-  if (!hasRuntimeRiskAcknowledgement(options.text) || !options.conversationText) {
+  if (!hasRuntimeRiskAcknowledgement(options.text)) {
     return null;
   }
   const acknowledgedTool = readAcknowledgedRuntimeToolName(options.text);
   if (!acknowledgedTool) {
+    return null;
+  }
+  const acknowledgedWebSearchQuery = acknowledgedTool === "web_search"
+    ? readAcknowledgedWebSearchQuery(options.text)
+    : null;
+  if (acknowledgedWebSearchQuery) {
+    return {
+      tool: "web_search",
+      intent: "web_search",
+      args: {
+        query: acknowledgedWebSearchQuery,
+        maxResults: 5,
+      },
+    };
+  }
+  if (!options.conversationText) {
     return null;
   }
   const priorUserMessages = extractPriorRuntimeUserMessages(options.conversationText);
@@ -300,6 +316,12 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
     }
   }
   return null;
+}
+
+function readAcknowledgedWebSearchQuery(text: string): string | null {
+  const match = text.match(/\brun\s+web_search\s+for:\s*([\s\S]+)$/i);
+  const query = sanitizeOneLine(match?.[1] ?? "", 500);
+  return query || null;
 }
 
 function readAcknowledgedRuntimeToolName(text: string): RuntimeToolName | null {
@@ -884,8 +906,16 @@ function formatRuntimeAcknowledgementPrompt(
     "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
     "- **Acknowledgement effect:** action will run after explicit acknowledgement; no hidden block is applied",
     "",
-    `**To continue, reply:** \`I acknowledge AgentC native risk and run ${request.tool}\``,
+    `**To continue, reply:** \`${formatRuntimeAcknowledgementPhrase(request)}\``,
   ].join("\n");
+}
+
+function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolRequest) {
+  const base = `I acknowledge AgentC native risk and run ${request.tool}`;
+  if (request.tool === "web_search" && typeof request.args.query === "string" && request.args.query.trim()) {
+    return `${base} for: ${sanitizeOneLine(request.args.query, 500)}`;
+  }
+  return base;
 }
 
 function formatRiskDisclosureDisclaimer(value: string | undefined) {
