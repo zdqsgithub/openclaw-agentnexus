@@ -644,6 +644,37 @@ describe("handleSendChat", () => {
     ]);
   });
 
+  it("sends AgentC native risk acknowledgements immediately into the active run", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "chat.send") {
+        return { status: "started", runId: "risk-ack-run" };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const acknowledgement = "I acknowledge AgentC native risk and run runtime_skill_execute";
+    const host = makeHost({
+      client: { request } as unknown as ChatHost["client"],
+      chatRunId: "run-1",
+      chatStream: "Native tool acknowledgement required",
+      chatMessage: acknowledgement,
+      sessionKey: "agent:main:main",
+    });
+
+    await handleSendChat(host);
+
+    expect(request).toHaveBeenCalledWith("chat.send", {
+      sessionKey: "agent:main:main",
+      message: acknowledgement,
+      deliver: false,
+      idempotencyKey: expect.any(String),
+      attachments: undefined,
+    });
+    expect(host.chatQueue).toEqual([]);
+    expect(host.chatRunId).toBe("run-1");
+    expect(host.chatStream).toBe("Native tool acknowledgement required");
+    expect(host.chatMessage).toBe("");
+  });
+
   it("removes pending steer indicators when the run finishes", async () => {
     const host = makeHost({
       chatQueue: [
