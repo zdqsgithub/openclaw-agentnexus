@@ -98,6 +98,15 @@ function isBtwCommand(text: string) {
   return /^\/btw(?::|\s|$)/i.test(text.trim());
 }
 
+function isAgentCRuntimeRiskAcknowledgement(text: string) {
+  const normalized = normalizeLowercaseStringOrEmpty(text);
+  return (
+    /\bruntime_skill_execute\b/.test(normalized) &&
+    /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(normalized) &&
+    /\b(agentc native risk|native risk|risk disclosure|tool risk)\b/.test(normalized)
+  );
+}
+
 export async function handleAbortChat(host: ChatHost) {
   // If disconnected but we have an active runId, queue the abort for when we reconnect
   if (!host.connected && host.chatRunId) {
@@ -387,6 +396,24 @@ export async function handleSendChat(
   }
 
   if (isChatBusy(host)) {
+    if (host.chatRunId && isAgentCRuntimeRiskAcknowledgement(message)) {
+      if (messageOverride == null) {
+        host.chatMessage = "";
+        host.chatAttachments = [];
+      }
+      const runId = await sendSteerChatMessage(host as unknown as ChatState, message);
+      if (runId) {
+        setLastActiveSessionKey(
+          host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
+          host.sessionKey,
+        );
+        scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0], true);
+      } else if (messageOverride == null) {
+        host.chatMessage = previousDraft;
+        host.chatAttachments = attachments;
+      }
+      return;
+    }
     enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
     return;
   }
