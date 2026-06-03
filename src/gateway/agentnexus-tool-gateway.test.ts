@@ -1074,6 +1074,107 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
+  it("attempts same-session Google Sheets range follow-ups through the gateway lease instead of prompting again", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "sheets_read_range",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      expect(body).toMatchObject({
+        tool: "sheets_read_range",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          range: "Sheet1!A1:Z20",
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain("riskAcknowledgement");
+      expect(JSON.stringify(body)).not.toContain("runtimeRiskAcknowledgement");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              source: "public Google Sheets read",
+              range: "Sheet1!A1:Z20",
+              rowCount: 20,
+              columnCount: 20,
+              redacted: true,
+            },
+            sessionGovernance: {
+              toolContext: {
+                rawPayloadStored: false,
+                redacted: true,
+              },
+              followUpGrounding: {
+                enabled: true,
+                allowedFor: "same_session_same_resource_read_followups",
+                mutationBoundary: "writes_or_scope_expansion_require_new_approval",
+                redacted: true,
+              },
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
+        "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+        "Return redacted metadata only with source, range, rowCount, and columnCount.",
+        "Use the existing same-resource session read lease when eligible; do not ask for a second acknowledgement.",
+      ].join("\n"),
+      fetchFn,
+      conversationText: [
+        "source: public Google Sheets metadata",
+        "resultType: spreadsheet_metadata",
+        "sheetCount: 1",
+        "rowCountMax: 50",
+        "columnCountMax: 20",
+      ].join("\n"),
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(reply?.content).toContain("source: public Google Sheets read");
+    expect(reply?.content).toContain("range: Sheet1!A1:Z20");
+    expect(reply?.content).toContain("rowCount: 20");
+    expect(reply?.content).toContain("columnCount: 20");
+    expect(reply?.content).toContain("follow_up_context: active for this session");
+    expect(reply?.content).not.toContain("Native tool acknowledgement required");
+    expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
   it("includes redacted channel draft context in the runtime acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

@@ -300,7 +300,16 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   });
 
   const runtimeRiskAcknowledged = hasRuntimeRiskAcknowledgement(options.text);
-  if (requiresRuntimeAcknowledgement(riskDisclosure) && !runtimeRiskAcknowledged) {
+  const canAttemptSessionLeaseExecution = canAttemptRuntimeSessionLeaseExecution({
+    request,
+    text: options.text,
+    conversationText: options.conversationText,
+  });
+  if (
+    requiresRuntimeAcknowledgement(riskDisclosure) &&
+    !runtimeRiskAcknowledged &&
+    !canAttemptSessionLeaseExecution
+  ) {
     return {
       adapter: "agentnexus-tool-gateway",
       content: formatRuntimeAcknowledgementPrompt(request, riskDisclosure),
@@ -1139,6 +1148,33 @@ function hasRuntimeRiskAcknowledgement(text: string) {
   const lower = text.toLowerCase();
   return /\b(i acknowledge|acknowledge|i confirm|confirm|approved|proceed)\b/.test(lower) &&
     /\b(agentc native risk|native risk|risk disclosure|tool risk|runtime_cron_request)\b/.test(lower);
+}
+
+function canAttemptRuntimeSessionLeaseExecution(options: {
+  request: AgentNexusRuntimeToolRequest;
+  text: string;
+  conversationText?: string;
+}) {
+  if (options.request.tool !== "sheets_read_range") {
+    return false;
+  }
+  if (!hasPreviousGoogleSheetsReadOrMetadataContext(options.conversationText)) {
+    return false;
+  }
+  return isSameSessionGoogleSheetsReadPrompt(options.text);
+}
+
+function hasPreviousGoogleSheetsReadOrMetadataContext(conversationText: string | undefined) {
+  return typeof conversationText === "string" &&
+    /\bsource:\s*(?:authorized|public) Google Sheets (?:metadata|read)\b/i.test(conversationText);
+}
+
+function isSameSessionGoogleSheetsReadPrompt(text: string) {
+  return /\bsheets_read_range\b/i.test(text) ||
+    /\bsame[-\s]?resource\b/i.test(text) ||
+    /\bsame runtime session\b/i.test(text) ||
+    /\bsame (?:Google Sheet|spreadsheet)\b/i.test(text) ||
+    /\bexisting .*session read lease\b/i.test(text);
 }
 
 function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): AgentNexusRuntimeToolRequest {
