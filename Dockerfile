@@ -42,6 +42,7 @@ RUN --mount=type=bind,source=${OPENCLAW_BUNDLED_PLUGIN_DIR},target=/tmp/${OPENCL
 # ── Stage 2: Build ──────────────────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
 ARG OPENCLAW_BUNDLED_PLUGIN_DIR
+ARG AGENTNEXUS_RUNTIME_SOURCE_REVISION=unknown
 
 # Install Bun (required for build scripts). Retry the whole bootstrap flow to
 # tolerate transient 5xx failures from bun.sh/GitHub during CI image builds.
@@ -81,6 +82,7 @@ RUN echo "==> Verifying critical native addons..." && \
     (echo "ERROR: matrix-sdk-crypto native addon missing (pnpm install may have silently failed on this arch)" >&2 && exit 1)
 
 COPY . .
+RUN printf '%s\n' "$AGENTNEXUS_RUNTIME_SOURCE_REVISION" > .agentnexus-runtime-source-revision
 
 # Normalize extension paths now so runtime COPY preserves safe modes
 # without adding a second full extensions layer.
