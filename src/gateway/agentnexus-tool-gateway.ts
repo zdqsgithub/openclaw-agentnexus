@@ -1158,10 +1158,10 @@ function canAttemptRuntimeSessionLeaseExecution(options: {
   if (options.request.tool !== "sheets_read_range") {
     return false;
   }
-  if (!hasPreviousGoogleSheetsReadOrMetadataContext(options.conversationText)) {
-    return false;
+  if (hasPreviousGoogleSheetsReadOrMetadataContext(options.conversationText)) {
+    return isSameSessionGoogleSheetsReadPrompt(options.text);
   }
-  return isSameSessionGoogleSheetsReadPrompt(options.text);
+  return isExplicitSameResourceGoogleSheetsLeasePrompt(options.text);
 }
 
 function hasPreviousGoogleSheetsReadOrMetadataContext(conversationText: string | undefined) {
@@ -1175,6 +1175,16 @@ function isSameSessionGoogleSheetsReadPrompt(text: string) {
     /\bsame runtime session\b/i.test(text) ||
     /\bsame (?:Google Sheet|spreadsheet)\b/i.test(text) ||
     /\bexisting .*session read lease\b/i.test(text);
+}
+
+function isExplicitSameResourceGoogleSheetsLeasePrompt(text: string) {
+  const mentionsTool = /\bsheets_read_range\b/i.test(text);
+  const mentionsSameResource = /\bsame[-\s]?resource\b/i.test(text) ||
+    /\bsame (?:Google Sheet|spreadsheet)\b/i.test(text);
+  const mentionsSessionLease = /\bsame runtime session\b/i.test(text) ||
+    /\bexisting .*session read lease\b/i.test(text) ||
+    /\bsession read lease\b/i.test(text);
+  return mentionsTool && mentionsSameResource && mentionsSessionLease;
 }
 
 function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): AgentNexusRuntimeToolRequest {
