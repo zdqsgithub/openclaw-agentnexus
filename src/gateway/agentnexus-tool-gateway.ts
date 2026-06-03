@@ -1,12 +1,15 @@
 type RuntimeToolName =
   | "web_search"
   | "sheets_read_range"
+  | "sheets_get_metadata"
   | "calendar_list_events"
   | "github_public_repo_read"
   | "runtime_skill_execute"
   | "runtime_cron_request"
   | "channel_publish_preview"
   | "runtime_session_export";
+
+const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
@@ -134,6 +137,16 @@ export function resolveAgentNexusRuntimeToolRequest(
   }
 
   const spreadsheetId = extractGoogleSheetsSpreadsheetId(normalized);
+  if (spreadsheetId && isGoogleSheetsMetadataRequest(lower)) {
+    return {
+      tool: "sheets_get_metadata",
+      intent: "google_sheets_read",
+      args: {
+        spreadsheetId,
+        fields: GOOGLE_SHEETS_METADATA_FIELDS,
+      },
+    };
+  }
   if (spreadsheetId && /\b(read|list|access|summarize|summary|review|inspect|sheet|sheets|spreadsheet|googlesheet|google workspace|gws|write)\b/.test(lower)) {
     return {
       tool: "sheets_read_range",
@@ -175,6 +188,18 @@ export function resolveAgentNexusRuntimeToolRequest(
   }
 
   return null;
+}
+
+function isGoogleSheetsMetadataRequest(lowerText: string) {
+  if (/\bsheets_get_metadata\b/.test(lowerText) || /\bspreadsheet_metadata\b/.test(lowerText)) {
+    return true;
+  }
+  if (/\b(sheetcount|sheet count|rowcountmax|row count max|columncountmax|column count max|sheets\.properties)\b/.test(lowerText)) {
+    return true;
+  }
+  return /\bmetadata\b/.test(lowerText) &&
+    /\b(sheet|sheets|spreadsheet|googlesheet|google sheet)\b/.test(lowerText) &&
+    !/\b(source|range|rowcount|columncount)\b/.test(lowerText);
 }
 
 export function buildChannelPublishBoundaryAnswer(text: string): string | null {
@@ -344,6 +369,12 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
   if (acknowledgedGoogleSheetsRequest) {
     return acknowledgedGoogleSheetsRequest;
   }
+  const acknowledgedGoogleSheetsMetadataRequest = acknowledgedTool === "sheets_get_metadata"
+    ? readAcknowledgedGoogleSheetsMetadataRequest(options.text)
+    : null;
+  if (acknowledgedGoogleSheetsMetadataRequest) {
+    return acknowledgedGoogleSheetsMetadataRequest;
+  }
   if (!options.conversationText) {
     return null;
   }
@@ -407,6 +438,32 @@ function readAcknowledgedGoogleSheetsRequest(text: string): AgentNexusRuntimeToo
   };
 }
 
+function readAcknowledgedGoogleSheetsMetadataRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const match = text.match(/\brun\s+sheets_get_metadata\s+for:\s*([\s\S]+)$/i);
+  const payload = match?.[1] ?? "";
+  if (!payload.trim()) {
+    return null;
+  }
+  const spreadsheetInput = readAcknowledgedField(payload, "spreadsheet", 180) ||
+    readAcknowledgedField(payload, "spreadsheetId", 120) ||
+    readAcknowledgedField(payload, "url", 240);
+  const spreadsheetId = spreadsheetInput
+    ? extractGoogleSheetsSpreadsheetId(spreadsheetInput) || sanitizeGoogleSheetsSpreadsheetId(spreadsheetInput)
+    : null;
+  if (!spreadsheetId) {
+    return null;
+  }
+  const fields = readAcknowledgedField(payload, "fields", 240) || GOOGLE_SHEETS_METADATA_FIELDS;
+  return {
+    tool: "sheets_get_metadata",
+    intent: "google_sheets_read",
+    args: {
+      spreadsheetId,
+      fields,
+    },
+  };
+}
+
 function readAcknowledgedField(payload: string, name: string, maxLength: number) {
   const match = payload.match(new RegExp(`(?:^|;)\\s*${escapeRegExp(name)}\\s*=\\s*([^;]+)`, "i"));
   return sanitizeOneLine(match?.[1] ?? "", maxLength);
@@ -419,6 +476,7 @@ function readAcknowledgedRuntimeToolName(text: string): RuntimeToolName | null {
     toolName === "web_search" ||
     toolName === "calendar_list_events" ||
     toolName === "sheets_read_range" ||
+    toolName === "sheets_get_metadata" ||
     toolName === "github_public_repo_read" ||
     toolName === "channel_publish_preview" ||
     toolName === "runtime_skill_execute" ||
@@ -599,6 +657,12 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
   }
 
   if (params.request.intent === "google_sheets_read") {
+    if (params.request.tool === "sheets_get_metadata") {
+      return withRiskDisclosurePrefix(
+        riskDisclosurePrefix,
+        formatGoogleSheetsMetadataAnswer(params.result.body),
+      );
+    }
     return withRiskDisclosurePrefix(
       riskDisclosurePrefix,
       formatGoogleSheetsReadAnswer(params.result.body, params.request.args),
@@ -1139,6 +1203,17 @@ function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolReques
       return `${base} for: spreadsheet=${spreadsheetId}; range=${range}${requestedWrite}`;
     }
   }
+  if (request.tool === "sheets_get_metadata") {
+    const spreadsheetId = typeof request.args.spreadsheetId === "string"
+      ? sanitizeGoogleSheetsSpreadsheetId(request.args.spreadsheetId)
+      : null;
+    const fields = typeof request.args.fields === "string" && request.args.fields.trim()
+      ? sanitizeOneLine(request.args.fields, 240)
+      : GOOGLE_SHEETS_METADATA_FIELDS;
+    if (spreadsheetId) {
+      return `${base} for: spreadsheet=${spreadsheetId}; fields=${fields}`;
+    }
+  }
   return base;
 }
 
@@ -1258,6 +1333,54 @@ function formatGoogleSheetsReadAnswer(body: Record<string, unknown>, args: Recor
     );
   }
   return lines.join("\n");
+}
+
+function formatGoogleSheetsMetadataAnswer(body: Record<string, unknown>) {
+  const result = readToolResult(body);
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : {};
+  const source = typeof record.source === "string" && /\b(?:authorized|public) Google Sheets metadata\b/i.test(record.source)
+    ? sanitizeOneLine(record.source, 80)
+    : "authorized Google Sheets metadata";
+  const sheets = Array.isArray(record.sheets) ? record.sheets : [];
+  const sheetCount = readFiniteMetadataCount(record.sheetCount) ?? sheets.length;
+  const rowCountMax = readFiniteMetadataCount(record.rowCountMax) ?? readMaxSheetGridCount(sheets, "rowCount") ?? 0;
+  const columnCountMax = readFiniteMetadataCount(record.columnCountMax) ??
+    readMaxSheetGridCount(sheets, "columnCount") ?? 0;
+  return [
+    `source: ${source}`,
+    "resultType: spreadsheet_metadata",
+    `sheetCount: ${sheetCount}`,
+    `rowCountMax: ${rowCountMax}`,
+    `columnCountMax: ${columnCountMax}`,
+  ].join("\n");
+}
+
+function readFiniteMetadataCount(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : null;
+}
+
+function readMaxSheetGridCount(sheets: unknown[], field: "rowCount" | "columnCount") {
+  const counts = sheets
+    .map((sheet) => {
+      const sheetRecord = sheet && typeof sheet === "object" && !Array.isArray(sheet)
+        ? sheet as Record<string, unknown>
+        : {};
+      const properties = sheetRecord.properties && typeof sheetRecord.properties === "object" &&
+          !Array.isArray(sheetRecord.properties)
+        ? sheetRecord.properties as Record<string, unknown>
+        : {};
+      const gridProperties = properties.gridProperties && typeof properties.gridProperties === "object" &&
+          !Array.isArray(properties.gridProperties)
+        ? properties.gridProperties as Record<string, unknown>
+        : {};
+      return readFiniteMetadataCount(gridProperties[field]);
+    })
+    .filter((count): count is number => count !== null);
+  return counts.length > 0 ? Math.max(...counts) : null;
 }
 
 function hasRuntimeSessionFollowUpGrounding(body: Record<string, unknown>) {

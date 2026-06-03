@@ -58,6 +58,38 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     });
   });
 
+  it("maps explicit Google Sheets metadata requests to the metadata Tool Gateway call", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "Use AgentNexus Tool Gateway action sheets_get_metadata for this Google Sheet https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit. Return spreadsheet_metadata only.",
+      new Date("2026-05-21T17:00:00.000Z"),
+    );
+
+    expect(request).toEqual({
+      tool: "sheets_get_metadata",
+      intent: "google_sheets_read",
+      args: {
+        spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+        fields: "spreadsheetId,properties.title,sheets.properties",
+      },
+    });
+  });
+
+  it("maps general spreadsheet metadata intent without overfitting to one summary shape", () => {
+    const request = resolveAgentNexusRuntimeToolRequest(
+      "Get spreadsheet metadata for this Google Sheet https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit before deciding what to inspect next.",
+      new Date("2026-05-21T17:00:00.000Z"),
+    );
+
+    expect(request).toEqual({
+      tool: "sheets_get_metadata",
+      intent: "google_sheets_read",
+      args: {
+        spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+        fields: "spreadsheetId,properties.title,sheets.properties",
+      },
+    });
+  });
+
   it("maps citation requests to server-side web search calls", () => {
     const request = resolveAgentNexusRuntimeToolRequest(
       "Search current public FDA AI device guidance and include citation URLs.",
@@ -942,6 +974,106 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
+  it("includes spreadsheet metadata context in the runtime acknowledgement phrase", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "sheets_get_metadata",
+        intent: "google_sheets_read",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          fields: "spreadsheetId,properties.title,sheets.properties",
+        },
+      },
+      result: {
+        ok: false,
+        status: 428,
+        body: {
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          runtimeUi: {
+            component: "native_tool_warning_ack_modal",
+            title: "Native tool acknowledgement required",
+            riskTier: "medium",
+            toolId: "sheets_get_metadata",
+            redacted: true,
+          },
+        },
+      },
+    });
+
+    expect(answer).toContain(
+      "I acknowledge AgentC native risk and run sheets_get_metadata for: spreadsheet=1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg; fields=spreadsheetId,properties.title,sheets.properties",
+    );
+  });
+
+  it("executes Google Sheets metadata from the full acknowledgement phrase without conversation history", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "sheets_get_metadata",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      expect(init?.body).toEqual(expect.stringContaining('"tool":"sheets_get_metadata"'));
+      expect(init?.body).toEqual(expect.stringContaining('"spreadsheetId":"1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg"'));
+      expect(init?.body).toEqual(expect.stringContaining('"fields":"spreadsheetId,properties.title,sheets.properties"'));
+      expect(init?.body).toEqual(expect.stringContaining('"riskAcknowledgement":true'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              source: "authorized Google Sheets metadata",
+              resultType: "spreadsheet_metadata",
+              sheetCount: 2,
+              rowCountMax: 20,
+              columnCountMax: 8,
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text:
+        "I acknowledge AgentC native risk and run sheets_get_metadata for: spreadsheet=1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg; fields=spreadsheetId,properties.title,sheets.properties",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("source: authorized Google Sheets metadata");
+    expect(reply?.content).toContain("resultType: spreadsheet_metadata");
+    expect(reply?.content).toContain("sheetCount: 2");
+    expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
   it("includes redacted channel draft context in the runtime acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,
@@ -1277,6 +1409,70 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(answer).not.toContain("redaction:");
     expect(answer).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
     expect(answer).not.toMatch(/person@example.com|access_token|refresh_token|Bearer/i);
+  });
+
+  it("formats Google Sheets metadata as strict redacted shape evidence only", () => {
+    const answer = formatAgentNexusRuntimeToolAnswer({
+      request: {
+        tool: "sheets_get_metadata",
+        intent: "google_sheets_read",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          fields: "spreadsheetId,properties.title,sheets.properties",
+        },
+      },
+      result: {
+        ok: true,
+        status: 200,
+        body: {
+          data: {
+            result: {
+              source: "authorized Google Sheets metadata",
+              resultType: "spreadsheet_metadata",
+              spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+              properties: {
+                title: "Private customer@example.com launch tracker",
+              },
+              sheets: [
+                {
+                  properties: {
+                    sheetId: 12345,
+                    title: "Private Launch",
+                    gridProperties: {
+                      rowCount: 20,
+                      columnCount: 8,
+                    },
+                  },
+                },
+                {
+                  properties: {
+                    sheetId: 67890,
+                    title: "Token access_token Bearer",
+                    gridProperties: {
+                      rowCount: 10,
+                      columnCount: 4,
+                    },
+                  },
+                },
+              ],
+              redacted: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(answer).toBe([
+      "source: authorized Google Sheets metadata",
+      "resultType: spreadsheet_metadata",
+      "sheetCount: 2",
+      "rowCountMax: 20",
+      "columnCountMax: 8",
+    ].join("\n"));
+    expect(answer).not.toContain("Private Launch");
+    expect(answer).not.toContain("12345");
+    expect(answer).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+    expect(answer).not.toMatch(/customer@example.com|access_token|refresh_token|Bearer/i);
   });
 
   it("surfaces redacted Google Sheets session follow-up context without raw values", () => {
