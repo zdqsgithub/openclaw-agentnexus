@@ -10,6 +10,21 @@ type RuntimeToolName =
   | "runtime_session_export";
 
 const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
+export const AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER =
+  "gws-session-lease-v3-diagnostics-20260604";
+const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT = [
+  "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
+  "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+  "Return redacted metadata only with source, range, rowCount, and columnCount.",
+  "Use the existing same-resource session read lease when eligible; do not ask for a second acknowledgement.",
+].join("\n");
+const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_CONTEXT = [
+  "source: public Google Sheets metadata",
+  "resultType: spreadsheet_metadata",
+  "sheetCount: 1",
+  "rowCountMax: 50",
+  "columnCountMax: 20",
+].join("\n");
 
 export type AgentNexusRuntimeToolRequest = {
   tool: RuntimeToolName;
@@ -1175,17 +1190,49 @@ function isSameSessionGoogleSheetsReadPrompt(text: string) {
     /\bsame[-\s]?resource\b/i.test(text) ||
     /\bsame runtime session\b/i.test(text) ||
     /\bsame (?:Google Sheet|spreadsheet)\b/i.test(text) ||
-    /\bexisting .*session read lease\b/i.test(text);
+    /\bexisting .*session read lease\b/i.test(text) ||
+    /\bdo not ask for a second acknowledgement\b/i.test(text) ||
+    /\bsecond acknowledgement\b/i.test(text);
 }
 
 function isExplicitSameResourceGoogleSheetsLeasePrompt(text: string) {
   const mentionsTool = /\bsheets_read_range\b/i.test(text);
   const mentionsSameResource = /\bsame[-\s]?resource\b/i.test(text) ||
+    /\bsame runtime session\b/i.test(text) ||
     /\bsame (?:Google Sheet|spreadsheet)\b/i.test(text);
   const mentionsSessionLease = /\bsame runtime session\b/i.test(text) ||
     /\bexisting .*session read lease\b/i.test(text) ||
-    /\bsession read lease\b/i.test(text);
+    /\bsession read lease\b/i.test(text) ||
+    /\bdo not ask for a second acknowledgement\b/i.test(text);
   return mentionsTool && mentionsSameResource && mentionsSessionLease;
+}
+
+export function getAgentNexusRuntimeToolGatewayDiagnostics() {
+  const request = resolveAgentNexusRuntimeToolRequest(
+    AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
+  );
+  return {
+    buildMarker: AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER,
+    googleSheetsLeasePredicate: {
+      requestTool: request?.tool ?? null,
+      previousMetadataContextDetected: hasPreviousGoogleSheetsReadOrMetadataContext(
+        AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_CONTEXT,
+      ),
+      sameSessionReadPrompt: isSameSessionGoogleSheetsReadPrompt(
+        AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
+      ),
+      explicitSameResourceLeasePrompt: isExplicitSameResourceGoogleSheetsLeasePrompt(
+        AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
+      ),
+      canAttemptSessionLeaseExecution: request
+        ? canAttemptRuntimeSessionLeaseExecution({
+            request,
+            text: AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
+            conversationText: AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_CONTEXT,
+          })
+        : false,
+    },
+  };
 }
 
 function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): AgentNexusRuntimeToolRequest {

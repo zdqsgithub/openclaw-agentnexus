@@ -71,6 +71,16 @@ describe("gateway probe endpoints", () => {
               googleSheetsSessionLease: "explicit_same_resource_read_followups",
               googleSheetsFollowUpGrounding: "session_redacted_metadata",
             },
+            toolGatewayDiagnostics: {
+              buildMarker: "gws-session-lease-v3-diagnostics-20260604",
+              googleSheetsLeasePredicate: {
+                requestTool: "sheets_read_range",
+                previousMetadataContextDetected: true,
+                sameSessionReadPrompt: true,
+                explicitSameResourceLeasePrompt: true,
+                canAttemptSessionLeaseExecution: true,
+              },
+            },
           });
           expect(getBody()).not.toContain("https://agtnx.ai/api/runtime/tools/execute");
           expect(getBody()).not.toContain("opaque-grounding-bundle");

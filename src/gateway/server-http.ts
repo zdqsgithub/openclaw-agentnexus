@@ -75,6 +75,7 @@ import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { VOICECLAW_REALTIME_PATH } from "./voiceclaw-realtime/paths.js";
 import { resolveRuntimeServiceVersion, VERSION } from "../version.js";
+import { getAgentNexusRuntimeToolGatewayDiagnostics } from "./agentnexus-tool-gateway.js";
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
@@ -203,6 +204,10 @@ const GATEWAY_PROBE_STATUS_BY_PATH = new Map<string, "live" | "ready">([
 ]);
 const AGENTNEXUS_BUILD_INFO_PATHS = new Set(["/agentnexus/build-info", "/build-info"]);
 const AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE = ".agentnexus-runtime-source-revision";
+const AGENTNEXUS_RUNTIME_SOURCE_REVISION_PATHS = [
+  AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE,
+  `/app/${AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE}`,
+] as const;
 const pluginGatewayAuthBypassPathsCache = new WeakMap<
   OpenClawConfig,
   Promise<ReadonlySet<string>>
@@ -382,13 +387,17 @@ function readAgentNexusRuntimeSourceRevision(env: NodeJS.ProcessEnv = process.en
   if (envRevision) {
     return envRevision;
   }
-  try {
-    return sanitizeRuntimeSourceRevision(
-      readFileSync(AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE, "utf8"),
-    );
-  } catch {
-    return null;
+  for (const filePath of AGENTNEXUS_RUNTIME_SOURCE_REVISION_PATHS) {
+    try {
+      const revision = sanitizeRuntimeSourceRevision(readFileSync(filePath, "utf8"));
+      if (revision) {
+        return revision;
+      }
+    } catch {
+      // Continue to the next known safe build-revision path.
+    }
   }
+  return null;
 }
 
 function buildAgentNexusBuildInfoPayload(env: NodeJS.ProcessEnv = process.env) {
@@ -416,6 +425,7 @@ function buildAgentNexusBuildInfoPayload(env: NodeJS.ProcessEnv = process.env) {
       googleSheetsSessionLease: "explicit_same_resource_read_followups",
       googleSheetsFollowUpGrounding: "session_redacted_metadata",
     },
+    toolGatewayDiagnostics: getAgentNexusRuntimeToolGatewayDiagnostics(),
   };
 }
 
