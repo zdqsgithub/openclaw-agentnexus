@@ -1439,4 +1439,128 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       }
     }
   });
+
+  it("routes explicit same-session Google Sheets lease prompts through Tool Gateway without local acknowledgement", async () => {
+    const port = enabledPort;
+    const previousDirectChat = process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+    const previousGatewayUrl = process.env.AGENTNEXUS_TOOL_GATEWAY_URL;
+    const previousManifestUrl = process.env.AGENTNEXUS_TOOL_MANIFEST_URL;
+    const previousRuntimeToken = process.env.AGENTNEXUS_RUNTIME_TOKEN;
+    const receivedRequests: Array<{ authorization?: string; body: unknown }> = [];
+    const toolGatewayServer = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => {
+        receivedRequests.push({
+          authorization: req.headers.authorization,
+          body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown,
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: {
+              result: {
+                source: "public Google Sheets read",
+                range: "Sheet1!A1:Z20",
+                rowCount: 20,
+                columnCount: 20,
+                redacted: true,
+              },
+              sessionGovernance: {
+                toolContext: {
+                  rawPayloadStored: false,
+                  redacted: true,
+                },
+                followUpGrounding: {
+                  enabled: true,
+                  allowedFor: "same_session_same_resource_read_followups",
+                  mutationBoundary: "writes_or_scope_expansion_require_new_approval",
+                  redacted: true,
+                },
+              },
+            },
+          }),
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => toolGatewayServer.listen(0, "127.0.0.1", resolve));
+    const address = toolGatewayServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Tool Gateway test server did not bind to a TCP port");
+    }
+
+    try {
+      process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = "1";
+      process.env.AGENTNEXUS_TOOL_GATEWAY_URL = `http://127.0.0.1:${address.port}/execute`;
+      process.env.AGENTNEXUS_TOOL_MANIFEST_URL = `http://127.0.0.1:${address.port}/manifest`;
+      process.env.AGENTNEXUS_RUNTIME_TOKEN = "runtime-token";
+      agentCommand.mockClear();
+
+      const res = await postChatCompletions(port, {
+        stream: false,
+        model: "openclaw",
+        messages: [
+          {
+            role: "user",
+            content: [
+              "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
+              "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+              "Return redacted metadata only with source, range, rowCount, and columnCount.",
+              "Use the existing same-resource session read lease when eligible; do not ask for a second acknowledgement.",
+            ].join("\n"),
+          },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as Record<string, unknown>;
+      const choice = ((json.choices as Array<Record<string, unknown>> | undefined) ?? [])[0];
+      const message = String((choice?.message as Record<string, unknown> | undefined)?.content ?? "");
+      expect(message).toContain("source: public Google Sheets read");
+      expect(message).toContain("range: Sheet1!A1:Z20");
+      expect(message).toContain("rowCount: 20");
+      expect(message).toContain("columnCount: 20");
+      expect(message).toContain("follow_up_context: active for this session");
+      expect(message).not.toContain("Native tool acknowledgement required");
+      expect(message).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+      expect(agentCommand).toHaveBeenCalledTimes(0);
+      expect(receivedRequests).toEqual([
+        {
+          authorization: "Bearer runtime-token",
+          body: expect.objectContaining({
+            tool: "sheets_read_range",
+            args: expect.objectContaining({
+              spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+              range: "Sheet1!A1:Z20",
+            }),
+          }),
+        },
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        toolGatewayServer.close((err) => (err ? reject(err) : resolve())),
+      );
+      if (previousDirectChat === undefined) {
+        delete process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT;
+      } else {
+        process.env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT = previousDirectChat;
+      }
+      if (previousGatewayUrl === undefined) {
+        delete process.env.AGENTNEXUS_TOOL_GATEWAY_URL;
+      } else {
+        process.env.AGENTNEXUS_TOOL_GATEWAY_URL = previousGatewayUrl;
+      }
+      if (previousManifestUrl === undefined) {
+        delete process.env.AGENTNEXUS_TOOL_MANIFEST_URL;
+      } else {
+        process.env.AGENTNEXUS_TOOL_MANIFEST_URL = previousManifestUrl;
+      }
+      if (previousRuntimeToken === undefined) {
+        delete process.env.AGENTNEXUS_RUNTIME_TOKEN;
+      } else {
+        process.env.AGENTNEXUS_RUNTIME_TOKEN = previousRuntimeToken;
+      }
+    }
+  });
 });
