@@ -11,7 +11,7 @@ type RuntimeToolName =
 
 const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
 export const AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER =
-  "gws-session-lease-v5-explicit-read-lease-bypass-20260604";
+  "gws-session-lease-v6-read-lease-execution-attempt-20260604";
 const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT = [
   "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
   "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
@@ -1184,6 +1184,9 @@ function canAttemptRuntimeSessionLeaseExecution(options: {
   if (options.request.tool !== "sheets_read_range") {
     return false;
   }
+  if (isExplicitGoogleSheetsReadLeaseExecutionAttempt(options)) {
+    return true;
+  }
   if (isExplicitGoogleSheetsReadLeaseBypassPrompt(options.text)) {
     return true;
   }
@@ -1191,6 +1194,24 @@ function canAttemptRuntimeSessionLeaseExecution(options: {
     return isGoogleSheetsSessionReadLeasePrompt(options.text);
   }
   return isExplicitSameResourceGoogleSheetsLeasePrompt(options.text);
+}
+
+function isExplicitGoogleSheetsReadLeaseExecutionAttempt(options: {
+  request: AgentNexusRuntimeToolRequest;
+  text: string;
+}) {
+  if (options.request.args.requestedWrite === true) {
+    return false;
+  }
+  const lower = options.text.toLowerCase();
+  if (!lower.includes("sheets_read_range")) {
+    return false;
+  }
+  const explicitlyRequestsNoSecondAck = lower.includes("do not ask for a second acknowledgement") ||
+    lower.includes("no second acknowledgement");
+  const explicitlySameSessionLease = lower.includes("same runtime session") &&
+    (lower.includes("session read lease") || lower.includes("same-resource session read lease"));
+  return explicitlyRequestsNoSecondAck || explicitlySameSessionLease;
 }
 
 function hasPreviousGoogleSheetsReadOrMetadataContext(conversationText: string | undefined) {
@@ -1272,6 +1293,12 @@ export function getAgentNexusRuntimeToolGatewayDiagnostics() {
       explicitReadLeaseBypassPrompt: isExplicitGoogleSheetsReadLeaseBypassPrompt(
         AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
       ),
+      explicitReadLeaseExecutionAttempt: request
+        ? isExplicitGoogleSheetsReadLeaseExecutionAttempt({
+            request,
+            text: AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
+          })
+        : false,
       canAttemptSessionLeaseExecution: request
         ? canAttemptRuntimeSessionLeaseExecution({
             request,
