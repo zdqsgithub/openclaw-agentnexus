@@ -2590,6 +2590,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         text: parsedMessage,
         now: new Date(now),
         signal: activeRunAbort.controller.signal,
+        sessionKey,
         conversationText: extractAgentNexusRuntimeConversationText(
           readAgentNexusRuntimeConversationMessages({
             sessionKey,

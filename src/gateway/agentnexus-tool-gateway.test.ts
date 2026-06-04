@@ -2093,6 +2093,96 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/haven.t shared|paste the link|can't access|cannot access|Bearer|access_token|customer@example.com/i);
   });
 
+  it("answers Google Sheets follow-ups from same-session cached redacted evidence when transcript text is unavailable", async () => {
+    const sessionKey = `agent:main:gws-cache-${Date.now()}`;
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        result: {
+          readOnly: true,
+          redacted: true,
+          resultType: "spreadsheet_values",
+          source: "public Google Sheets read",
+          range: "Sheet1!A1:Z20",
+          rowCount: 20,
+          columnCount: 20,
+          previewRows: [["person@example.com", "private value"]],
+        },
+        sessionGovernance: {
+          toolContext: {
+            rawPayloadStored: false,
+            redacted: true,
+          },
+          followUpGrounding: {
+            enabled: true,
+            allowedFor: "same_session_same_resource_read_followups",
+            mutationBoundary: "writes_or_scope_expansion_require_new_approval",
+            redacted: true,
+          },
+        },
+      },
+      error: null,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+    const readReply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
+        "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+        "Return redacted metadata only with source, range, rowCount, and columnCount.",
+      ].join("\n"),
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+      sessionKey,
+    });
+
+    expect(readReply?.content).toContain("source: public Google Sheets read");
+    expect(readReply?.content).toContain("follow_up_context: active for this session");
+
+    const blockedFetch = vi.fn(async () => {
+      throw new Error("same-session cached follow-up must not call a model or re-execute a tool");
+    }) as unknown as typeof fetch;
+    const followUpReply = await resolveAgentNexusRuntimeTextReply({
+      text: "what is this googlesheet contain? give me a detailed summary",
+      env: {
+        OPENCLAW_MANAGED_HEADLESS: "1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn: blockedFetch,
+      sessionKey,
+    });
+
+    expect(blockedFetch).not.toHaveBeenCalled();
+    expect(followUpReply).toMatchObject({
+      adapter: "agentnexus-tool-gateway",
+    });
+    expect(followUpReply?.content).toContain("# Google Sheets summary from session context");
+    expect(followUpReply?.content).toContain("Shape: 20 rows x 20 columns");
+    expect(followUpReply?.content).not.toMatch(/person@example\.com|private value|Bearer|access_token|refresh_token/i);
+  });
+
+  it("does not reuse cached Google Sheets evidence across runtime sessions", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("other session must not reuse cached Sheets evidence");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "what is this googlesheet contain? give me a detailed summary",
+      env: {},
+      fetchFn,
+      sessionKey: `agent:main:gws-cache-other-${Date.now()}`,
+    });
+
+    expect(reply).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("requires a new approval for Google Sheets mutation follow-ups instead of reusing the read context", async () => {
     const fetchFn = vi.fn(async () => {
       throw new Error("write follow-up must not silently execute through the previous read lease");
