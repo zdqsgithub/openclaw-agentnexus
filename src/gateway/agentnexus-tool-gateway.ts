@@ -292,19 +292,20 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
-  const riskDisclosure = await fetchAgentNexusRuntimeRiskDisclosure({
-    config,
-    request,
-    fetchFn: options.fetchFn,
-    signal: options.signal,
-  });
-
   const runtimeRiskAcknowledged = hasRuntimeRiskAcknowledgement(options.text);
   const canAttemptSessionLeaseExecution = canAttemptRuntimeSessionLeaseExecution({
     request,
     text: options.text,
     conversationText: options.conversationText,
   });
+  const riskDisclosure = canAttemptSessionLeaseExecution
+    ? null
+    : await fetchAgentNexusRuntimeRiskDisclosure({
+      config,
+      request,
+      fetchFn: options.fetchFn,
+      signal: options.signal,
+    });
   if (
     requiresRuntimeAcknowledgement(riskDisclosure) &&
     !runtimeRiskAcknowledged &&

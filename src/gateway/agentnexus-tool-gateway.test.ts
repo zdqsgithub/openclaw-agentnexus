@@ -1165,7 +1165,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(reply?.content).toContain("source: public Google Sheets read");
     expect(reply?.content).toContain("range: Sheet1!A1:Z20");
     expect(reply?.content).toContain("rowCount: 20");
@@ -1259,7 +1259,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(reply?.content).toContain("source: public Google Sheets read");
     expect(reply?.content).toContain("follow_up_context: active for this session");
     expect(reply?.content).not.toContain("Native tool acknowledgement required");
