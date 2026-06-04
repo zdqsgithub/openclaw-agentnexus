@@ -1508,6 +1508,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
               "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
               "Return redacted metadata only with source, range, rowCount, and columnCount.",
               "Use the existing same-resource session read lease when eligible; do not ask for a second acknowledgement.",
+              "Do not include cell values, emails, document body, OAuth material, provider payloads, or the spreadsheet id.",
             ].join("\n"),
           },
         ],
