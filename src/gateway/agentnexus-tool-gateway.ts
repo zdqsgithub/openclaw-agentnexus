@@ -11,7 +11,7 @@ type RuntimeToolName =
 
 const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
 export const AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER =
-  "gws-session-lease-v6-read-lease-execution-attempt-20260604";
+  "gws-session-lease-v7-followup-session-cache-20260604";
 const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT = [
   "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
   "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
@@ -83,6 +83,22 @@ type AgentNexusRuntimeRiskWarningUi = {
   riskFeeBillingState?: string;
   redacted: true;
 };
+
+type GoogleSheetsSessionEvidence = {
+  source: string;
+  range: string;
+  rowCount: number | null;
+  columnCount: number | null;
+  followUpContextActive: boolean;
+  followUpBoundary: string;
+};
+
+const GOOGLE_SHEETS_SESSION_EVIDENCE_TTL_MS = 60 * 60 * 1000;
+const GOOGLE_SHEETS_SESSION_EVIDENCE_MAX_ENTRIES = 100;
+const googleSheetsSessionEvidenceBySessionKey = new Map<string, {
+  evidence: GoogleSheetsSessionEvidence;
+  updatedAt: number;
+}>();
 
 export type AgentNexusRuntimeDirectChatConfig = {
   apiKey: string;
@@ -248,8 +264,14 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   fetchFn?: typeof fetch;
   signal?: AbortSignal;
   conversationText?: string;
+  sessionKey?: string;
 }): Promise<AgentNexusRuntimeTextReply | null> {
-  const previousGoogleSheetsReply = buildPreviousGoogleSheetsFollowUpReply(options.text, options.conversationText);
+  const previousGoogleSheetsReply = buildPreviousGoogleSheetsFollowUpReply(options.text, options.conversationText) ??
+    buildPreviousGoogleSheetsFollowUpReplyFromCache({
+      text: options.text,
+      sessionKey: options.sessionKey,
+      now: options.now,
+    });
   if (previousGoogleSheetsReply) {
     return {
       adapter: "agentnexus-tool-gateway",
@@ -344,19 +366,25 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   const executableRequest = runtimeRiskAcknowledged
     ? withRuntimeRiskAcknowledgement(request)
     : request;
+  const content = formatAgentNexusRuntimeToolAnswer({
+    request: executableRequest,
+    riskDisclosure,
+    result: await executeAgentNexusRuntimeTool({
+      config,
+      request: executableRequest,
+      fetchFn: options.fetchFn,
+      signal: options.signal,
+    }),
+  });
+  rememberGoogleSheetsSessionEvidenceFromAnswer({
+    sessionKey: options.sessionKey,
+    answer: content,
+    now: options.now,
+  });
 
   return {
     adapter: "agentnexus-tool-gateway",
-    content: formatAgentNexusRuntimeToolAnswer({
-      request: executableRequest,
-      riskDisclosure,
-      result: await executeAgentNexusRuntimeTool({
-        config,
-        request: executableRequest,
-        fetchFn: options.fetchFn,
-        signal: options.signal,
-      }),
-    }),
+    content,
   };
 }
 
@@ -1807,6 +1835,79 @@ function buildPreviousGoogleSheetsFollowUpReply(text: string, conversationText: 
     return formatPreviousGoogleSheetsMutationBoundary(evidence);
   }
   return formatPreviousGoogleSheetsSummary(evidence, text);
+}
+
+function buildPreviousGoogleSheetsFollowUpReplyFromCache(options: {
+  text: string;
+  sessionKey?: string;
+  now?: Date;
+}) {
+  if (extractGoogleSheetsSpreadsheetId(options.text) || !isGoogleSheetsFollowUpIntent(options.text)) {
+    return null;
+  }
+  const evidence = readCachedGoogleSheetsSessionEvidence(options.sessionKey, options.now);
+  if (!evidence) {
+    return null;
+  }
+  if (isGoogleSheetsMutationFollowUp(options.text)) {
+    return formatPreviousGoogleSheetsMutationBoundary(evidence);
+  }
+  return formatPreviousGoogleSheetsSummary(evidence, options.text);
+}
+
+function rememberGoogleSheetsSessionEvidenceFromAnswer(options: {
+  sessionKey?: string;
+  answer: string;
+  now?: Date;
+}) {
+  const sessionKey = normalizeRuntimeSessionEvidenceKey(options.sessionKey);
+  if (!sessionKey) {
+    return;
+  }
+  const evidence = extractFormattedGoogleSheetsEvidence(options.answer);
+  if (!evidence) {
+    return;
+  }
+  const updatedAt = options.now?.getTime() ?? Date.now();
+  googleSheetsSessionEvidenceBySessionKey.set(sessionKey, { evidence, updatedAt });
+  pruneGoogleSheetsSessionEvidence(updatedAt);
+}
+
+function readCachedGoogleSheetsSessionEvidence(sessionKey: string | undefined, now?: Date) {
+  const normalized = normalizeRuntimeSessionEvidenceKey(sessionKey);
+  if (!normalized) {
+    return null;
+  }
+  const entry = googleSheetsSessionEvidenceBySessionKey.get(normalized);
+  if (!entry) {
+    return null;
+  }
+  const timestamp = now?.getTime() ?? Date.now();
+  if (timestamp - entry.updatedAt > GOOGLE_SHEETS_SESSION_EVIDENCE_TTL_MS) {
+    googleSheetsSessionEvidenceBySessionKey.delete(normalized);
+    return null;
+  }
+  return entry.evidence;
+}
+
+function pruneGoogleSheetsSessionEvidence(now: number) {
+  for (const [key, entry] of googleSheetsSessionEvidenceBySessionKey) {
+    if (now - entry.updatedAt > GOOGLE_SHEETS_SESSION_EVIDENCE_TTL_MS) {
+      googleSheetsSessionEvidenceBySessionKey.delete(key);
+    }
+  }
+  while (googleSheetsSessionEvidenceBySessionKey.size > GOOGLE_SHEETS_SESSION_EVIDENCE_MAX_ENTRIES) {
+    const oldest = googleSheetsSessionEvidenceBySessionKey.keys().next().value;
+    if (typeof oldest !== "string") {
+      return;
+    }
+    googleSheetsSessionEvidenceBySessionKey.delete(oldest);
+  }
+}
+
+function normalizeRuntimeSessionEvidenceKey(sessionKey: string | undefined) {
+  const normalized = sessionKey?.trim();
+  return normalized && normalized.length <= 500 ? normalized : null;
 }
 
 function isGoogleSheetsFollowUpIntent(text: string) {
