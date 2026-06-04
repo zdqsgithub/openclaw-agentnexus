@@ -72,7 +72,7 @@ describe("gateway probe endpoints", () => {
               googleSheetsFollowUpGrounding: "session_redacted_metadata",
             },
             toolGatewayDiagnostics: {
-              buildMarker: "gws-session-lease-v5-explicit-read-lease-bypass-20260604",
+              buildMarker: "gws-session-lease-v6-read-lease-execution-attempt-20260604",
               googleSheetsLeasePredicate: {
                 requestTool: "sheets_read_range",
                 previousMetadataContextDetected: true,
@@ -81,6 +81,7 @@ describe("gateway probe endpoints", () => {
                 generalFollowUpRequestTool: "sheets_read_range",
                 explicitSameResourceLeasePrompt: true,
                 explicitReadLeaseBypassPrompt: true,
+                explicitReadLeaseExecutionAttempt: true,
                 canAttemptSessionLeaseExecution: true,
               },
             },
