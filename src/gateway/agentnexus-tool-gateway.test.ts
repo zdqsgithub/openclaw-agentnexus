@@ -1266,6 +1266,79 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
+  it("turns general same-sheet follow-ups after metadata into lease-backed range reads", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      expect(target).not.toContain("/api/runtime/tools/manifest");
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      expect(body).toMatchObject({
+        tool: "sheets_read_range",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          range: "Sheet1!A1:Z20",
+          majorDimension: "ROWS",
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain("riskAcknowledgement");
+      expect(JSON.stringify(body)).not.toContain("runtimeRiskAcknowledgement");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              source: "public Google Sheets read",
+              range: "Sheet1!A1:Z20",
+              rowCount: 20,
+              columnCount: 20,
+              redacted: true,
+            },
+            sessionGovernance: {
+              toolContext: {
+                rawPayloadStored: false,
+                redacted: true,
+              },
+              followUpGrounding: {
+                enabled: true,
+                allowedFor: "same_session_same_resource_read_followups",
+                mutationBoundary: "writes_or_scope_expansion_require_new_approval",
+                redacted: true,
+              },
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "what is this googlesheet contain? give me a detailed summary",
+      fetchFn,
+      conversationText: [
+        "user: Use AgentNexus Tool Gateway action sheets_get_metadata for this authorized or link-readable Google Sheet.",
+        "user: https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+        "assistant:",
+        "source: public Google Sheets metadata",
+        "resultType: spreadsheet_metadata",
+        "sheetCount: 1",
+        "rowCountMax: 50",
+        "columnCountMax: 20",
+      ].join("\n"),
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(reply?.content).toContain("source: public Google Sheets read");
+    expect(reply?.content).toContain("rowCount: 20");
+    expect(reply?.content).toContain("columnCount: 20");
+    expect(reply?.content).toContain("follow_up_context: active for this session");
+    expect(reply?.content).not.toContain("Native tool acknowledgement required");
+    expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
   it("includes redacted channel draft context in the runtime acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

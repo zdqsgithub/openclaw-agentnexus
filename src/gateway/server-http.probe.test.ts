@@ -72,11 +72,13 @@ describe("gateway probe endpoints", () => {
               googleSheetsFollowUpGrounding: "session_redacted_metadata",
             },
             toolGatewayDiagnostics: {
-              buildMarker: "gws-session-lease-v3-diagnostics-20260604",
+              buildMarker: "gws-session-lease-v4-general-followup-20260604",
               googleSheetsLeasePredicate: {
                 requestTool: "sheets_read_range",
                 previousMetadataContextDetected: true,
                 sameSessionReadPrompt: true,
+                generalFollowUpPrompt: true,
+                generalFollowUpRequestTool: "sheets_read_range",
                 explicitSameResourceLeasePrompt: true,
                 canAttemptSessionLeaseExecution: true,
               },

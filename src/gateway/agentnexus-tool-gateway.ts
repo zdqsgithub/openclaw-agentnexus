@@ -11,14 +11,19 @@ type RuntimeToolName =
 
 const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
 export const AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER =
-  "gws-session-lease-v3-diagnostics-20260604";
+  "gws-session-lease-v4-general-followup-20260604";
 const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT = [
   "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
   "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
   "Return redacted metadata only with source, range, rowCount, and columnCount.",
   "Use the existing same-resource session read lease when eligible; do not ask for a second acknowledgement.",
 ].join("\n");
+const AGENTNEXUS_GWS_GENERAL_FOLLOW_UP_DIAGNOSTIC_PROMPT =
+  "what is this googlesheet contain? give me a detailed summary";
 const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_CONTEXT = [
+  "user: Use AgentNexus Tool Gateway action sheets_get_metadata for this authorized or link-readable Google Sheet.",
+  "user: https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+  "assistant:",
   "source: public Google Sheets metadata",
   "resultType: spreadsheet_metadata",
   "sheetCount: 1",
@@ -163,6 +168,7 @@ export function resolveAgentNexusRuntimeToolRequest(
     };
   }
   if (spreadsheetId && /\b(read|list|access|summarize|summary|review|inspect|sheet|sheets|spreadsheet|googlesheet|google workspace|gws|write)\b/.test(lower)) {
+    const intentText = stripUrlsForIntent(lower);
     return {
       tool: "sheets_read_range",
       intent: "google_sheets_read",
@@ -170,7 +176,7 @@ export function resolveAgentNexusRuntimeToolRequest(
         spreadsheetId,
         range: "Sheet1!A1:Z20",
         majorDimension: "ROWS",
-        requestedWrite: /\b(write|edit|update|append|change|modify)\b/.test(lower),
+        requestedWrite: isGoogleSheetsMutationIntent(intentText),
       },
     };
   }
@@ -271,7 +277,11 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     text: options.text,
     conversationText: options.conversationText,
     now: options.now,
-  }) ?? resolveAgentNexusRuntimeToolRequest(options.text, options.now);
+  }) ?? resolveAgentNexusRuntimeToolRequest(options.text, options.now)
+    ?? resolvePreviousGoogleSheetsReadRangeRequest({
+      text: options.text,
+      conversationText: options.conversationText,
+    });
   const channelBoundaryAnswer = request ? null : buildChannelPublishBoundaryAnswer(options.text);
   if (channelBoundaryAnswer) {
     return {
@@ -1175,7 +1185,7 @@ function canAttemptRuntimeSessionLeaseExecution(options: {
     return false;
   }
   if (hasPreviousGoogleSheetsReadOrMetadataContext(options.conversationText)) {
-    return isSameSessionGoogleSheetsReadPrompt(options.text);
+    return isGoogleSheetsSessionReadLeasePrompt(options.text);
   }
   return isExplicitSameResourceGoogleSheetsLeasePrompt(options.text);
 }
@@ -1193,6 +1203,18 @@ function isSameSessionGoogleSheetsReadPrompt(text: string) {
     /\bexisting .*session read lease\b/i.test(text) ||
     /\bdo not ask for a second acknowledgement\b/i.test(text) ||
     /\bsecond acknowledgement\b/i.test(text);
+}
+
+function isGoogleSheetsSessionReadLeasePrompt(text: string) {
+  if (isGoogleSheetsMutationFollowUp(text)) {
+    return false;
+  }
+  return isSameSessionGoogleSheetsReadPrompt(text) ||
+    isGoogleSheetsFollowUpIntent(text) ||
+    (
+      /\b(read|inspect|access|summarize|summarise|summary|describe|explain|contain|contains|column|columns|row|rows|data)\b/i.test(text) &&
+      /\b(sheet|sheets|spreadsheet|googlesheet|google sheet)\b/i.test(text)
+    );
 }
 
 function isExplicitSameResourceGoogleSheetsLeasePrompt(text: string) {
@@ -1221,6 +1243,13 @@ export function getAgentNexusRuntimeToolGatewayDiagnostics() {
       sameSessionReadPrompt: isSameSessionGoogleSheetsReadPrompt(
         AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
       ),
+      generalFollowUpPrompt: isGoogleSheetsSessionReadLeasePrompt(
+        AGENTNEXUS_GWS_GENERAL_FOLLOW_UP_DIAGNOSTIC_PROMPT,
+      ),
+      generalFollowUpRequestTool: resolvePreviousGoogleSheetsReadRangeRequest({
+        text: AGENTNEXUS_GWS_GENERAL_FOLLOW_UP_DIAGNOSTIC_PROMPT,
+        conversationText: AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_CONTEXT,
+      })?.tool ?? null,
       explicitSameResourceLeasePrompt: isExplicitSameResourceGoogleSheetsLeasePrompt(
         AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT,
       ),
@@ -1233,6 +1262,42 @@ export function getAgentNexusRuntimeToolGatewayDiagnostics() {
         : false,
     },
   };
+}
+
+function resolvePreviousGoogleSheetsReadRangeRequest(options: {
+  text: string;
+  conversationText?: string;
+}): AgentNexusRuntimeToolRequest | null {
+  if (!hasPreviousGoogleSheetsReadOrMetadataContext(options.conversationText)) {
+    return null;
+  }
+  if (!isGoogleSheetsSessionReadLeasePrompt(options.text)) {
+    return null;
+  }
+  const spreadsheetId = extractGoogleSheetsSpreadsheetId(options.text) ||
+    extractGoogleSheetsSpreadsheetId(options.conversationText ?? "");
+  if (!spreadsheetId) {
+    return null;
+  }
+  return {
+    tool: "sheets_read_range",
+    intent: "google_sheets_read",
+    args: {
+      spreadsheetId,
+      range: readGoogleSheetsRangeFromText(options.text) ?? "Sheet1!A1:Z20",
+      majorDimension: "ROWS",
+    },
+  };
+}
+
+function readGoogleSheetsRangeFromText(text: string): string | null {
+  const explicitRange = text.match(
+    /\brange\s*(?:=|:)?\s*([A-Za-z0-9 _.'-]{1,80}![A-Z]{1,3}\d{1,7}:[A-Z]{1,3}\d{1,7})\b/i,
+  );
+  const bareRange = text.match(
+    /\b([A-Za-z0-9 _.'-]{1,80}![A-Z]{1,3}\d{1,7}:[A-Z]{1,3}\d{1,7})\b/i,
+  );
+  return sanitizeOneLine(explicitRange?.[1] ?? bareRange?.[1] ?? "", 120) || null;
 }
 
 function withRuntimeRiskAcknowledgement(request: AgentNexusRuntimeToolRequest): AgentNexusRuntimeToolRequest {
@@ -1705,7 +1770,15 @@ function isGoogleSheetsFollowUpIntent(text: string) {
 }
 
 function isGoogleSheetsMutationFollowUp(text: string) {
+  return isGoogleSheetsMutationIntent(stripUrlsForIntent(text));
+}
+
+function isGoogleSheetsMutationIntent(text: string) {
   return /\b(write|update|delete|remove|append|insert|modify|edit|change|create\s+(?:a\s+)?(?:row|record|entry)|add\s+(?:a\s+)?row)\b/i.test(text);
+}
+
+function stripUrlsForIntent(text: string) {
+  return text.replace(/https?:\/\/\S+/gi, " ");
 }
 
 function extractFormattedGoogleSheetsEvidence(text: string) {
