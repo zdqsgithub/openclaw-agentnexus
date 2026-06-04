@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AUTH_TOKEN,
   AUTH_NONE,
@@ -34,6 +34,68 @@ describe("gateway OpenAI-compatible disabled HTTP routes", () => {
 });
 
 describe("gateway probe endpoints", () => {
+  it("exposes AgentNexus build info without leaking configured URLs or secrets", async () => {
+    vi.stubEnv("AGENTNEXUS_RUNTIME_SOURCE_REVISION", "3cb3fe847d96e8c920298a4e7d4c11bd2643ddfd");
+    vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
+    vi.stubEnv("AGENTNEXUS_TOOL_MANIFEST_URL", "https://agtnx.ai/api/runtime/tools/manifest");
+    vi.stubEnv("AGENTNEXUS_RUNTIME_TOOL_GROUNDING_ENABLED", "1");
+    vi.stubEnv("AGENTNEXUS_RUNTIME_TOOL_GROUNDING_BUNDLE", "opaque-grounding-bundle");
+    try {
+      await withGatewayServer({
+        prefix: "agentnexus-build-info",
+        resolvedAuth: AUTH_NONE,
+        overrides: {
+          handleHooksRequest: async () => new Promise<boolean>(() => {}),
+        },
+        run: async (server) => {
+          const req = createRequest({ path: "/agentnexus/build-info" });
+          const { res, getBody } = createResponse();
+          await dispatchRequest(server, req, res);
+
+          expect(res.statusCode).toBe(200);
+          const body = JSON.parse(getBody()) as Record<string, unknown>;
+          expect(body).toMatchObject({
+            ok: true,
+            status: "build_info",
+            packageName: "openclaw",
+            sourceRevision: "3cb3fe847d96e8c920298a4e7d4c11bd2643ddfd",
+            sourceRevisionFile: ".agentnexus-runtime-source-revision",
+            agentnexus: {
+              toolGatewayConfigured: true,
+              toolManifestConfigured: true,
+              runtimeToolGroundingEnabled: true,
+              runtimeToolGroundingBundleConfigured: true,
+            },
+            capabilities: {
+              buildInfoEndpoint: true,
+              googleSheetsSessionLease: "explicit_same_resource_read_followups",
+              googleSheetsFollowUpGrounding: "session_redacted_metadata",
+            },
+          });
+          expect(getBody()).not.toContain("https://agtnx.ai/api/runtime/tools/execute");
+          expect(getBody()).not.toContain("opaque-grounding-bundle");
+        },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects non-read methods on AgentNexus build info", async () => {
+    await withGatewayServer({
+      prefix: "agentnexus-build-info-method",
+      resolvedAuth: AUTH_NONE,
+      run: async (server) => {
+        const req = createRequest({ path: "/agentnexus/build-info", method: "POST" });
+        const { res, getBody } = createResponse();
+        await dispatchRequest(server, req, res);
+
+        expect(res.statusCode).toBe(405);
+        expect(getBody()).toBe("Method Not Allowed");
+      },
+    });
+  });
+
   it("answers shallow /healthz before potentially blocking request stages", async () => {
     await withGatewayServer({
       prefix: "probe-healthz-short-circuit",

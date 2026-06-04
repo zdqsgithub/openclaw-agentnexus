@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -73,6 +74,7 @@ import type { PreauthConnectionBudget } from "./server/preauth-connection-budget
 import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { VOICECLAW_REALTIME_PATH } from "./voiceclaw-realtime/paths.js";
+import { resolveRuntimeServiceVersion, VERSION } from "../version.js";
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
@@ -199,6 +201,8 @@ const GATEWAY_PROBE_STATUS_BY_PATH = new Map<string, "live" | "ready">([
   ["/ready", "ready"],
   ["/readyz", "ready"],
 ]);
+const AGENTNEXUS_BUILD_INFO_PATHS = new Set(["/agentnexus/build-info", "/build-info"]);
+const AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE = ".agentnexus-runtime-source-revision";
 const pluginGatewayAuthBypassPathsCache = new WeakMap<
   OpenClawConfig,
   Promise<ReadonlySet<string>>
@@ -248,6 +252,10 @@ function isEmbeddingsPath(pathname: string): boolean {
 
 function isOpenAiChatCompletionsPath(pathname: string): boolean {
   return pathname === "/v1/chat/completions";
+}
+
+function isAgentNexusBuildInfoPath(pathname: string): boolean {
+  return AGENTNEXUS_BUILD_INFO_PATHS.has(pathname);
 }
 
 function isOpenResponsesPath(pathname: string): boolean {
@@ -358,6 +366,81 @@ async function handleGatewayProbeRequest(
   }
   res.statusCode = statusCode;
   res.end(method === "HEAD" ? undefined : body);
+  return true;
+}
+
+function sanitizeRuntimeSourceRevision(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return /^[A-Za-z0-9_.:-]{1,160}$/.test(trimmed) ? trimmed : "invalid";
+}
+
+function readAgentNexusRuntimeSourceRevision(env: NodeJS.ProcessEnv = process.env) {
+  const envRevision = sanitizeRuntimeSourceRevision(env.AGENTNEXUS_RUNTIME_SOURCE_REVISION);
+  if (envRevision) {
+    return envRevision;
+  }
+  try {
+    return sanitizeRuntimeSourceRevision(
+      readFileSync(AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE, "utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function buildAgentNexusBuildInfoPayload(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    ok: true,
+    status: "build_info",
+    packageName: "openclaw",
+    packageVersion: resolveRuntimeServiceVersion(env),
+    binaryVersion: VERSION,
+    sourceRevision: readAgentNexusRuntimeSourceRevision(env),
+    sourceRevisionFile: AGENTNEXUS_RUNTIME_SOURCE_REVISION_FILE,
+    nodeVersion: process.versions.node,
+    agentnexus: {
+      managedHeadless: env.OPENCLAW_MANAGED_HEADLESS === "1",
+      directOpenRouterChat: env.AGENTNEXUS_DIRECT_OPENROUTER_CHAT === "1",
+      toolGatewayConfigured: Boolean(env.AGENTNEXUS_TOOL_GATEWAY_URL?.trim()),
+      toolManifestConfigured: Boolean(env.AGENTNEXUS_TOOL_MANIFEST_URL?.trim()),
+      runtimeToolGroundingEnabled: env.AGENTNEXUS_RUNTIME_TOOL_GROUNDING_ENABLED === "1",
+      runtimeToolGroundingBundleConfigured: Boolean(
+        env.AGENTNEXUS_RUNTIME_TOOL_GROUNDING_BUNDLE?.trim(),
+      ),
+    },
+    capabilities: {
+      buildInfoEndpoint: true,
+      googleSheetsSessionLease: "explicit_same_resource_read_followups",
+      googleSheetsFollowUpGrounding: "session_redacted_metadata",
+    },
+  };
+}
+
+function handleAgentNexusBuildInfoRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  requestPath: string,
+): boolean {
+  if (!isAgentNexusBuildInfoPath(requestPath)) {
+    return false;
+  }
+
+  const method = (req.method ?? "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.statusCode = 405;
+    res.setHeader("Allow", "GET, HEAD");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Method Not Allowed");
+    return true;
+  }
+
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(method === "HEAD" ? undefined : JSON.stringify(buildAgentNexusBuildInfoPayload()));
   return true;
 }
 
@@ -948,6 +1031,9 @@ export function createGatewayHttpServer(opts: {
         ? resolvePluginRoutePathContext(requestPath)
         : null;
       const resolvedAuth = getResolvedAuth();
+      if (handleAgentNexusBuildInfoRequest(req, res, requestPath)) {
+        return;
+      }
       if (
         await handleGatewayProbeRequest(
           req,
