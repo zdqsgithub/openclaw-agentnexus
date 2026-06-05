@@ -658,6 +658,87 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
+  it("synthesizes structured native Continue from safe request args when runtimeUi omits retry payload", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "web_search",
+                    riskDisclosure: {
+                      riskTier: "high",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          error: "Native tool risk acknowledgement required.",
+          riskWarning: {
+            runtimeUi: {
+              component: "native_tool_warning_ack_modal",
+              title: "Native tool acknowledgement required",
+              riskTier: "high",
+              toolId: "web_search",
+              actionLabel: "web_search",
+              acknowledgementPhrase: "I acknowledge AgentC native risk and run web_search",
+              riskFeePreview: {
+                billingState: "configured_not_charged",
+              },
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Search the web for exactly 1 current public California news item. Use maxResults: 1.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("agentnexus-runtime-native-continue-action");
+    const encoded = reply?.content.match(/agentnexus-runtime-native-continue-action:\s*([^\s]+)\s*-->/i)?.[1];
+    expect(encoded).toBeTruthy();
+    const action = JSON.parse(decodeURIComponent(encoded ?? "")) as {
+      retryToolRequest?: { tool?: string; args?: Record<string, unknown>; redacted?: boolean };
+    };
+    expect(action.retryToolRequest).toEqual({
+      tool: "web_search",
+      args: expect.objectContaining({
+        query: expect.stringContaining("current public California news item"),
+        maxResults: 5,
+      }),
+      redacted: true,
+    });
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
   it("executes structured native Continue retryToolRequest with runtime acknowledgement flags", async () => {
     const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
