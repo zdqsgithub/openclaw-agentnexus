@@ -378,6 +378,23 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     !runtimeRiskAcknowledged &&
     !canAttemptSessionLeaseExecution
   ) {
+    const runtimeUi = await fetchAgentNexusRuntimeRiskWarningUi({
+      config,
+      request,
+      fetchFn: options.fetchFn,
+      signal: options.signal,
+    });
+    if (runtimeUi) {
+      return {
+        adapter: "agentnexus-tool-gateway",
+        content: formatRuntimeAcknowledgementPrompt(
+          request,
+          runtimeUiToRiskDisclosure(runtimeUi),
+          runtimeUi.acknowledgementPhrase,
+          runtimeUi.nativeContinueAction,
+        ),
+      };
+    }
     return {
       adapter: "agentnexus-tool-gateway",
       content: formatRuntimeAcknowledgementPrompt(request, riskDisclosure),
@@ -457,6 +474,12 @@ function resolveAcknowledgedRuntimeToolRequest(options: {
     : null;
   if (acknowledgedGoogleSheetsMetadataRequest) {
     return acknowledgedGoogleSheetsMetadataRequest;
+  }
+  const acknowledgedGitHubPublicRepoRequest = acknowledgedTool === "github_public_repo_read"
+    ? readAcknowledgedGitHubPublicRepoRequest(options.text)
+    : null;
+  if (acknowledgedGitHubPublicRepoRequest) {
+    return acknowledgedGitHubPublicRepoRequest;
   }
   if (!options.conversationText) {
     return null;
@@ -543,6 +566,29 @@ function readAcknowledgedGoogleSheetsMetadataRequest(text: string): AgentNexusRu
     args: {
       spreadsheetId,
       fields,
+    },
+  };
+}
+
+function readAcknowledgedGitHubPublicRepoRequest(text: string): AgentNexusRuntimeToolRequest | null {
+  const match = text.match(/\brun\s+github_public_repo_read\s+for:\s*([\s\S]+)$/i);
+  const payload = match?.[1] ?? "";
+  if (!payload.trim()) {
+    return null;
+  }
+  const explicitUrl = readAcknowledgedField(payload, "url", 240);
+  const repoSlug = readAcknowledgedField(payload, "repo", 160);
+  const url = explicitUrl
+    ? extractPublicGitHubRepoUrl(explicitUrl)
+    : normalizePublicGitHubRepoSlug(repoSlug);
+  if (!url) {
+    return null;
+  }
+  return {
+    tool: "github_public_repo_read",
+    intent: "github_public_repo_read",
+    args: {
+      url,
     },
   };
 }
@@ -647,6 +693,20 @@ export async function executeAgentNexusRuntimeTool(options: {
   } finally {
     boundedSignal.cleanup();
   }
+}
+
+async function fetchAgentNexusRuntimeRiskWarningUi(options: {
+  config: AgentNexusRuntimeToolConfig;
+  request: AgentNexusRuntimeToolRequest;
+  fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<AgentNexusRuntimeRiskWarningUi | null> {
+  const result = await executeAgentNexusRuntimeTool(options);
+  const code = typeof result.body.code === "string" ? result.body.code : "";
+  if (result.ok || code !== "RUNTIME_TOOL_RISK_ACK_REQUIRED") {
+    return null;
+  }
+  return readRuntimeRiskWarningUi(result.body);
 }
 
 export async function executeAgentNexusRuntimeDirectChat(options: {
@@ -1647,6 +1707,20 @@ function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolReques
       return `${base} for: spreadsheet=${spreadsheetId}; fields=${fields}`;
     }
   }
+  if (request.tool === "github_public_repo_read") {
+    const url = typeof request.args.url === "string" ? extractPublicGitHubRepoUrl(request.args.url) : null;
+    if (url) {
+      try {
+        const parsed = new URL(url);
+        const [owner, repo] = parsed.pathname.replace(/^\/+|\/+$/g, "").split("/");
+        if (owner && repo) {
+          return `${base} for: repo=${owner}/${repo}; path=README.md`;
+        }
+      } catch {
+        // Use the generic acknowledgement phrase if the URL cannot be normalized.
+      }
+    }
+  }
   return base;
 }
 
@@ -2335,6 +2409,15 @@ function extractPublicGitHubRepoUrl(text: string) {
   } catch {
     return null;
   }
+}
+
+function normalizePublicGitHubRepoSlug(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  const match = trimmed.match(/^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/);
+  if (!match) {
+    return null;
+  }
+  return `https://github.com/${match[1]}/${match[2]}`;
 }
 
 function extractGoogleSheetsSpreadsheetId(text: string) {

@@ -330,7 +330,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
   });
 
   it("requires explicit runtime acknowledgement before executing high-risk native tools", async () => {
-    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
       if (target.includes("/api/runtime/tools/manifest")) {
         return {
@@ -359,7 +359,16 @@ describe("AgentNexus runtime Tool Gateway client", () => {
           }),
         };
       }
-      throw new Error("execute endpoint must not be called before acknowledgement");
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      expect(rawBody).not.toContain("riskAcknowledgement");
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          error: "Native tool risk acknowledgement required.",
+        }),
+      };
     }) as unknown as typeof fetch;
 
     const reply = await resolveAgentNexusRuntimeTextReply({
@@ -373,7 +382,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
       },
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(reply?.content).toContain("## Native tool acknowledgement required");
     expect(reply?.content).toContain("execution_status: waiting_for_user_acknowledgement");
     expect(reply?.content).toContain("**Hard block after acknowledgement (`hard_block_after_acknowledgement`):** false");
@@ -545,6 +554,107 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).toContain("execution_status: waiting_for_user_acknowledgement");
     expect(reply?.content).toContain("`I acknowledge AgentC native risk and run web_search`");
     expect(reply?.content).not.toContain("AgentNexus Tool Gateway returned RUNTIME_TOOL_RISK_ACK_REQUIRED");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
+  it("uses Tool Gateway runtimeUi for pre-ack prompts when the manifest requires acknowledgement", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "github_public_repo_read",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      expect(JSON.parse(rawBody)).toEqual({
+        tool: "github_public_repo_read",
+        args: {
+          url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+        },
+      });
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          error: "Native tool risk acknowledgement required.",
+          data: {
+            tool: "github_public_repo_read",
+            result: null,
+            riskWarning: {
+              runtimeUi: {
+                component: "native_tool_warning_ack_modal",
+                title: "Native tool acknowledgement required",
+                riskTier: "medium",
+                capabilityId: "public_github_repo_read",
+                toolId: "github_public_repo_read",
+                actionLabel: "github_public_repo_read",
+                acknowledgementPhrase:
+                  "I acknowledge AgentC native risk and run github_public_repo_read for repo=zdqsgithub/openclaw-agentnexus; path=README.md",
+                continueAction: {
+                  mode: "retry_with_runtime_acknowledgement",
+                  riskAcknowledgementArgument: "riskAcknowledgement",
+                  runtimeRiskAcknowledgementArgument: "runtimeRiskAcknowledgement",
+                  argumentValue: true,
+                  retryToolRequest: {
+                    tool: "github_public_repo_read",
+                    args: {
+                      url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+                      runtimeSessionId: "runtime-debug-structured-continue",
+                    },
+                    redacted: true,
+                  },
+                },
+                riskFeePreview: {
+                  billingState: "configured_not_charged",
+                },
+                redacted: true,
+              },
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "Use AgentNexus Tool Gateway to read this public GitHub repo: https://github.com/zdqsgithub/openclaw-agentnexus.",
+      fetchFn,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(reply?.content).toContain("## Native tool acknowledgement required");
+    expect(reply?.content).toContain(
+      "`I acknowledge AgentC native risk and run github_public_repo_read for repo=zdqsgithub/openclaw-agentnexus; path=README.md`",
+    );
+    expect(reply?.content).toContain("agentnexus-runtime-native-continue-action");
+    expect(reply?.content).toContain("github_public_repo_read");
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
