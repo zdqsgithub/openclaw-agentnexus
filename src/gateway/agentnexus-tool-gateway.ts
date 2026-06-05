@@ -11,7 +11,7 @@ export type RuntimeToolName =
 
 const GOOGLE_SHEETS_METADATA_FIELDS = "spreadsheetId,properties.title,sheets.properties";
 export const AGENTNEXUS_RUNTIME_TOOL_GATEWAY_BUILD_MARKER =
-  "gws-session-lease-v7-followup-session-cache-20260604";
+  "gws-session-lease-v8-pending-ack-cache-20260605";
 const AGENTNEXUS_GWS_SESSION_LEASE_DIAGNOSTIC_PROMPT = [
   "Use AgentNexus Tool Gateway action sheets_read_range for the same Google Sheet in this same runtime session.",
   "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
@@ -43,6 +43,11 @@ export type AgentNexusRuntimeToolRequest = {
     | "runtime_cron_request"
     | "channel_publish_preview"
     | "runtime_session_export";
+};
+
+type PendingRuntimeAcknowledgementRequest = {
+  request: AgentNexusRuntimeToolRequest;
+  updatedAt: number;
 };
 
 export type AgentNexusRuntimeNativeContinueAction = {
@@ -112,6 +117,9 @@ const googleSheetsSessionEvidenceBySessionKey = new Map<string, {
   evidence: GoogleSheetsSessionEvidence;
   updatedAt: number;
 }>();
+const PENDING_RUNTIME_ACKNOWLEDGEMENT_TTL_MS = 15 * 60 * 1000;
+const PENDING_RUNTIME_ACKNOWLEDGEMENT_MAX_ENTRIES = 200;
+const pendingRuntimeAcknowledgementRequestBySessionKey = new Map<string, PendingRuntimeAcknowledgementRequest>();
 
 export type AgentNexusRuntimeDirectChatConfig = {
   apiKey: string;
@@ -313,7 +321,14 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     value: options.nativeContinueAction,
     text: options.text,
   });
-  const request = nativeContinueRequest ?? resolveAcknowledgedRuntimeToolRequest({
+  const pendingAcknowledgementRequest = nativeContinueRequest
+    ? null
+    : resolvePendingRuntimeAcknowledgementRequest({
+        text: options.text,
+        sessionKey: options.sessionKey,
+        now: options.now,
+      });
+  const request = nativeContinueRequest ?? pendingAcknowledgementRequest ?? resolveAcknowledgedRuntimeToolRequest({
     text: options.text,
     conversationText: options.conversationText,
     now: options.now,
@@ -385,6 +400,11 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
       signal: options.signal,
     });
     if (runtimeUi) {
+      rememberPendingRuntimeAcknowledgementRequest({
+        sessionKey: options.sessionKey,
+        request,
+        now: options.now,
+      });
       return {
         adapter: "agentnexus-tool-gateway",
         content: formatRuntimeAcknowledgementPrompt(
@@ -395,6 +415,11 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
         ),
       };
     }
+    rememberPendingRuntimeAcknowledgementRequest({
+      sessionKey: options.sessionKey,
+      request,
+      now: options.now,
+    });
     return {
       adapter: "agentnexus-tool-gateway",
       content: formatRuntimeAcknowledgementPrompt(request, riskDisclosure),
@@ -1258,6 +1283,9 @@ function resolveNativeContinueRuntimeToolRequest(options: {
   if (readAcknowledgedRuntimeToolName(options.text) !== action.retryToolRequest.tool) {
     return null;
   }
+  if (action.retryToolRequest.args.pendingSessionAcknowledgementRequest === true) {
+    return null;
+  }
   return {
     tool: action.retryToolRequest.tool,
     intent: runtimeToolIntent(action.retryToolRequest.tool),
@@ -1498,6 +1526,82 @@ function hasRuntimeRiskAcknowledgement(text: string) {
     /\b(agentc native risk|native risk|risk disclosure|tool risk|runtime_cron_request)\b/.test(lower);
 }
 
+function rememberPendingRuntimeAcknowledgementRequest(options: {
+  sessionKey?: string;
+  request: AgentNexusRuntimeToolRequest;
+  now?: Date;
+}) {
+  const sessionKey = normalizeRuntimeSessionEvidenceKey(options.sessionKey);
+  if (!sessionKey) {
+    return;
+  }
+  const args = normalizeRuntimeToolArgs(options.request.args);
+  if (!args) {
+    return;
+  }
+  const updatedAt = options.now?.getTime() ?? Date.now();
+  pendingRuntimeAcknowledgementRequestBySessionKey.set(sessionKey, {
+    request: {
+      tool: options.request.tool,
+      intent: options.request.intent,
+      args,
+    },
+    updatedAt,
+  });
+  prunePendingRuntimeAcknowledgementRequests(updatedAt);
+}
+
+function resolvePendingRuntimeAcknowledgementRequest(options: {
+  text: string;
+  sessionKey?: string;
+  now?: Date;
+}): AgentNexusRuntimeToolRequest | null {
+  if (!hasRuntimeRiskAcknowledgement(options.text)) {
+    return null;
+  }
+  const acknowledgedTool = readAcknowledgedRuntimeToolName(options.text);
+  if (!acknowledgedTool) {
+    return null;
+  }
+  const sessionKey = normalizeRuntimeSessionEvidenceKey(options.sessionKey);
+  if (!sessionKey) {
+    return null;
+  }
+  const entry = pendingRuntimeAcknowledgementRequestBySessionKey.get(sessionKey);
+  if (!entry) {
+    return null;
+  }
+  const timestamp = options.now?.getTime() ?? Date.now();
+  if (timestamp - entry.updatedAt > PENDING_RUNTIME_ACKNOWLEDGEMENT_TTL_MS) {
+    pendingRuntimeAcknowledgementRequestBySessionKey.delete(sessionKey);
+    return null;
+  }
+  if (entry.request.tool !== acknowledgedTool) {
+    return null;
+  }
+  pendingRuntimeAcknowledgementRequestBySessionKey.delete(sessionKey);
+  return {
+    tool: entry.request.tool,
+    intent: entry.request.intent,
+    args: { ...entry.request.args },
+  };
+}
+
+function prunePendingRuntimeAcknowledgementRequests(now: number) {
+  for (const [key, entry] of pendingRuntimeAcknowledgementRequestBySessionKey) {
+    if (now - entry.updatedAt > PENDING_RUNTIME_ACKNOWLEDGEMENT_TTL_MS) {
+      pendingRuntimeAcknowledgementRequestBySessionKey.delete(key);
+    }
+  }
+  while (pendingRuntimeAcknowledgementRequestBySessionKey.size > PENDING_RUNTIME_ACKNOWLEDGEMENT_MAX_ENTRIES) {
+    const oldest = pendingRuntimeAcknowledgementRequestBySessionKey.keys().next().value as string | undefined;
+    if (!oldest) {
+      return;
+    }
+    pendingRuntimeAcknowledgementRequestBySessionKey.delete(oldest);
+  }
+}
+
 function canAttemptRuntimeSessionLeaseExecution(options: {
   request: AgentNexusRuntimeToolRequest;
   text: string;
@@ -1709,7 +1813,30 @@ function formatRuntimeAcknowledgementPrompt(
 function formatRuntimeNativeContinueActionMarkdownComment(
   action: AgentNexusRuntimeNativeContinueAction,
 ): string {
-  return `<!-- agentnexus-runtime-native-continue-action:${encodeURIComponent(JSON.stringify(action))} -->`;
+  return `<!-- agentnexus-runtime-native-continue-action:${
+    encodeURIComponent(JSON.stringify(redactRuntimeNativeContinueActionForMarkdown(action)))
+  } -->`;
+}
+
+function redactRuntimeNativeContinueActionForMarkdown(
+  action: AgentNexusRuntimeNativeContinueAction,
+): AgentNexusRuntimeNativeContinueAction {
+  if (
+    action.retryToolRequest.tool !== "sheets_read_range" &&
+    action.retryToolRequest.tool !== "sheets_get_metadata"
+  ) {
+    return action;
+  }
+  return {
+    ...action,
+    retryToolRequest: {
+      tool: action.retryToolRequest.tool,
+      args: {
+        pendingSessionAcknowledgementRequest: true,
+      },
+      redacted: true,
+    },
+  };
 }
 
 function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolRequest) {
