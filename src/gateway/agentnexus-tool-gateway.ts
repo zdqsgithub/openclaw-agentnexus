@@ -706,7 +706,36 @@ async function fetchAgentNexusRuntimeRiskWarningUi(options: {
   if (result.ok || code !== "RUNTIME_TOOL_RISK_ACK_REQUIRED") {
     return null;
   }
-  return readRuntimeRiskWarningUi(result.body);
+  const runtimeUi = readRuntimeRiskWarningUi(result.body);
+  return runtimeUi ? withRuntimeNativeContinueFallback(runtimeUi, options.request) : null;
+}
+
+function withRuntimeNativeContinueFallback(
+  runtimeUi: AgentNexusRuntimeRiskWarningUi,
+  request: AgentNexusRuntimeToolRequest,
+): AgentNexusRuntimeRiskWarningUi {
+  if (runtimeUi.nativeContinueAction) {
+    return runtimeUi;
+  }
+  const tool = normalizeRuntimeToolName(request.tool);
+  const args = normalizeRuntimeToolArgs(request.args);
+  if (!tool || !args) {
+    return runtimeUi;
+  }
+  return {
+    ...runtimeUi,
+    nativeContinueAction: {
+      mode: "retry_with_runtime_acknowledgement",
+      retryToolRequest: {
+        tool,
+        args,
+        redacted: true,
+      },
+      riskAcknowledgementArgument: "riskAcknowledgement",
+      runtimeRiskAcknowledgementArgument: "runtimeRiskAcknowledgement",
+      argumentValue: true,
+    },
+  };
 }
 
 export async function executeAgentNexusRuntimeDirectChat(options: {
