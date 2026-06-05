@@ -782,7 +782,7 @@ export class OpenClawApp extends LitElement {
 
   async handleSendChat(
     messageOverride?: string,
-    opts?: Parameters<typeof handleSendChatInternal>[2],
+    opts?: { restoreDraft?: boolean; nativeContinueAction?: unknown },
   ) {
     await handleSendChatInternal(
       this as unknown as Parameters<typeof handleSendChatInternal>[0],

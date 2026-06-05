@@ -363,6 +363,71 @@ describe("AgentC runtime risk acknowledgement", () => {
     cancelButton?.click();
     expect(onSendText).toHaveBeenCalledTimes(1);
   });
+
+  it("sends structured native Continue action instead of only the acknowledgement phrase", () => {
+    const container = document.createElement("div");
+    const onSendText = vi.fn();
+    const nativeContinueAction = encodeURIComponent(JSON.stringify({
+      mode: "retry_with_runtime_acknowledgement",
+      retryToolRequest: {
+        tool: "github_public_repo_read",
+        args: {
+          url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+          runtimeSessionId: "runtime-session-github-main",
+        },
+        redacted: true,
+      },
+    }));
+
+    render(
+      renderChat(
+        createRiskAcknowledgementChatProps({
+          onSendText,
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: [
+                    "## Native tool acknowledgement required",
+                    "",
+                    "- **Action:** `github_public_repo_read`",
+                    "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+                    "",
+                    "**To continue, reply:** `I acknowledge AgentC native risk and run github_public_repo_read`",
+                    "",
+                    `<!-- agentnexus-runtime-native-continue-action:${nativeContinueAction} -->`,
+                  ].join("\n"),
+                },
+              ],
+              timestamp: Date.now(),
+            },
+          ],
+        }),
+      ),
+      container,
+    );
+
+    container.querySelector<HTMLButtonElement>('[data-agentc-runtime-risk-ack-continue="true"]')?.click();
+
+    expect(onSendText).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run github_public_repo_read",
+      {
+        nativeContinueAction: {
+          mode: "retry_with_runtime_acknowledgement",
+          retryToolRequest: {
+            tool: "github_public_repo_read",
+            args: {
+              url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+              runtimeSessionId: "runtime-session-github-main",
+            },
+            redacted: true,
+          },
+        },
+      },
+    );
+  });
 });
 
 describe("renderChatAvatar", () => {

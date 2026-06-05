@@ -115,8 +115,49 @@ function extractRuntimeAcknowledgementPhrase(markdown: string): string {
     "I acknowledge AgentC native risk and run the requested tool";
 }
 
+export type AgentCRuntimeNativeContinueAction = {
+  mode: "retry_with_runtime_acknowledgement";
+  retryToolRequest: {
+    tool?: unknown;
+    args?: unknown;
+    redacted?: unknown;
+  };
+  [key: string]: unknown;
+};
+
+function extractRuntimeNativeContinueAction(markdown: string): AgentCRuntimeNativeContinueAction | null {
+  const encoded = markdown.match(
+    /<!--\s*agentnexus-runtime-native-continue-action:\s*([^\s]+)\s*-->/i,
+  )?.[1];
+  if (!encoded) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(decodeURIComponent(encoded)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const action = parsed as Record<string, unknown>;
+    const retryToolRequest = action.retryToolRequest;
+    if (
+      action.mode !== "retry_with_runtime_acknowledgement" ||
+      !retryToolRequest ||
+      typeof retryToolRequest !== "object" ||
+      Array.isArray(retryToolRequest)
+    ) {
+      return null;
+    }
+    return action as AgentCRuntimeNativeContinueAction;
+  } catch {
+    return null;
+  }
+}
+
 type RuntimeRiskAcknowledgementActions = {
-  onRiskAcknowledgementContinue?: (phrase: string) => void;
+  onRiskAcknowledgementContinue?: (
+    phrase: string,
+    nativeContinueAction?: AgentCRuntimeNativeContinueAction,
+  ) => void;
   onRiskAcknowledgementCancel?: () => void;
 };
 
@@ -134,6 +175,7 @@ function renderChatMarkdown(
   }
 
   const acknowledgementPhrase = extractRuntimeAcknowledgementPhrase(markdown);
+  const nativeContinueAction = extractRuntimeNativeContinueAction(markdown);
 
   return html`
     <section class="agentc-runtime-risk-ack-card" data-agentc-runtime-risk-ack-card="true">
@@ -159,7 +201,13 @@ function renderChatMarkdown(
           type="button"
           class="agentc-runtime-risk-ack-card__button agentc-runtime-risk-ack-card__button--primary"
           data-agentc-runtime-risk-ack-continue="true"
-          @click=${() => actions.onRiskAcknowledgementContinue?.(acknowledgementPhrase)}
+          @click=${() => {
+            if (nativeContinueAction) {
+              actions.onRiskAcknowledgementContinue?.(acknowledgementPhrase, nativeContinueAction);
+              return;
+            }
+            actions.onRiskAcknowledgementContinue?.(acknowledgementPhrase);
+          }}
         >
           Continue with acknowledgement
         </button>
@@ -423,7 +471,10 @@ export function renderMessageGroup(
     embedSandboxMode?: EmbedSandboxMode;
     allowExternalEmbedUrls?: boolean;
     contextWindow?: number | null;
-    onRiskAcknowledgementContinue?: (phrase: string) => void;
+    onRiskAcknowledgementContinue?: (
+      phrase: string,
+      nativeContinueAction?: AgentCRuntimeNativeContinueAction,
+    ) => void;
     onRiskAcknowledgementCancel?: () => void;
     onDelete?: () => void;
   },
@@ -1362,7 +1413,10 @@ function renderGroupedMessage(
     assistantAttachmentAuthToken?: string | null;
     embedSandboxMode?: EmbedSandboxMode;
     allowExternalEmbedUrls?: boolean;
-    onRiskAcknowledgementContinue?: (phrase: string) => void;
+    onRiskAcknowledgementContinue?: (
+      phrase: string,
+      nativeContinueAction?: AgentCRuntimeNativeContinueAction,
+    ) => void;
     onRiskAcknowledgementCancel?: () => void;
   },
   onOpenSidebar?: (content: SidebarContent) => void,

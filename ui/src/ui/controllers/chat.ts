@@ -481,7 +481,12 @@ function buildApiAttachments(attachments?: ChatAttachment[]) {
 
 async function requestChatSend(
   state: ChatState,
-  params: { message: string; attachments?: ChatAttachment[]; runId: string },
+  params: {
+    message: string;
+    attachments?: ChatAttachment[];
+    runId: string;
+    nativeContinueAction?: unknown;
+  },
 ) {
   await state.client!.request("chat.send", {
     sessionKey: state.sessionKey,
@@ -489,6 +494,7 @@ async function requestChatSend(
     deliver: false,
     idempotencyKey: params.runId,
     attachments: buildApiAttachments(params.attachments),
+    ...(params.nativeContinueAction ? { nativeContinueAction: params.nativeContinueAction } : {}),
   });
 }
 
@@ -545,6 +551,7 @@ export async function sendChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
+  nativeContinueAction?: unknown,
 ): Promise<string | null> {
   if (!state.client || !state.connected) {
     return null;
@@ -589,7 +596,7 @@ export async function sendChatMessage(
   state.chatStreamStartedAt = now;
 
   try {
-    await requestChatSend(state, { message: msg, attachments, runId });
+    await requestChatSend(state, { message: msg, attachments, runId, nativeContinueAction });
     return runId;
   } catch (err) {
     const error = formatConnectError(err);
@@ -615,6 +622,7 @@ export async function sendDetachedChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
+  nativeContinueAction?: unknown,
 ): Promise<string | null> {
   if (!state.client || !state.connected) {
     return null;
@@ -627,7 +635,7 @@ export async function sendDetachedChatMessage(
   state.lastError = null;
   const runId = generateUUID();
   try {
-    await requestChatSend(state, { message: msg, attachments, runId });
+    await requestChatSend(state, { message: msg, attachments, runId, nativeContinueAction });
     return runId;
   } catch (err) {
     state.lastError = formatConnectError(err);
@@ -639,6 +647,7 @@ export async function sendSteerChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
+  nativeContinueAction?: unknown,
 ): Promise<string | null> {
   if (!state.client || !state.connected) {
     return null;
@@ -651,7 +660,7 @@ export async function sendSteerChatMessage(
   state.lastError = null;
   const runId = generateUUID();
   try {
-    await requestChatSend(state, { message: msg, attachments, runId });
+    await requestChatSend(state, { message: msg, attachments, runId, nativeContinueAction });
     return runId;
   } catch (err) {
     state.lastError = formatConnectError(err);

@@ -684,6 +684,90 @@ describe("gateway server chat", () => {
     });
   });
 
+  test("routes structured AgentNexus native Continue actions through Tool Gateway", async () => {
+    await withMainSessionStore(async () => {
+      const receivedRequests: Array<{ authorization?: string; body: unknown }> = [];
+      const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        receivedRequests.push({
+          authorization: init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>).authorization
+            : undefined,
+          body: JSON.parse(typeof init?.body === "string" ? init.body : "{}") as unknown,
+        });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              result: {
+                repo: "zdqsgithub/openclaw-agentnexus",
+                path: "README.md",
+                excerpt: "Runtime Tool Gateway client documentation.",
+                redacted: true,
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      vi.stubEnv("AGENTNEXUS_TOOL_GATEWAY_URL", "https://agtnx.ai/api/runtime/tools/execute");
+      vi.stubEnv("AGENTNEXUS_RUNTIME_TOKEN", "runtime-token");
+      vi.stubGlobal("fetch", fetchFn);
+      try {
+        const finalPromise = onceMessage(
+          ws,
+          (o) =>
+            o.type === "event" &&
+            o.event === "chat" &&
+            o.payload?.state === "final" &&
+            o.payload?.runId === "idem-agentnexus-native-continue-1",
+          CHAT_RESPONSE_TIMEOUT_MS,
+        );
+        const res = await rpcReq(ws, "chat.send", {
+          sessionKey: "main",
+          message: "I acknowledge AgentC native risk and run github_public_repo_read",
+          idempotencyKey: "idem-agentnexus-native-continue-1",
+          nativeContinueAction: {
+            mode: "retry_with_runtime_acknowledgement",
+            retryToolRequest: {
+              tool: "github_public_repo_read",
+              args: {
+                url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+                runtimeSessionId: "runtime-session-github-main",
+              },
+              redacted: true,
+            },
+          },
+        });
+        expect(res.ok).toBe(true);
+        const finalEvent = await finalPromise;
+        const finalText = extractFirstTextBlock(finalEvent.payload?.message);
+        expect(finalText).toContain("Public GitHub repo read completed through AgentNexus Tool Gateway.");
+        expect(finalText).toContain("repo: zdqsgithub/openclaw-agentnexus");
+        expect(finalText).not.toContain("Native tool acknowledgement required");
+        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+        expect(receivedRequests).toEqual([
+          {
+            authorization: "Bearer runtime-token",
+            body: {
+              tool: "github_public_repo_read",
+              args: expect.objectContaining({
+                url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+                runtimeSessionId: "runtime-session-github-main",
+                riskAcknowledgement: true,
+                runtimeRiskAcknowledgement: true,
+                acknowledgementSurface: "agentc_runtime_prompt",
+              }),
+            },
+          },
+        ]);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   test("routes generic managed-headless chat through direct runtime model without native agent dispatch", async () => {
     await withMainSessionStore(async () => {
       const fetchFn = vi.fn(async () => ({

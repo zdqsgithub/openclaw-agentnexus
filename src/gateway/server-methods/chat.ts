@@ -2144,6 +2144,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         content?: unknown;
       }>;
       timeoutMs?: number;
+      nativeContinueAction?: unknown;
       systemInputProvenance?: InputProvenance;
       systemProvenanceReceipt?: string;
       idempotencyKey: string;
@@ -2591,6 +2592,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         now: new Date(now),
         signal: activeRunAbort.controller.signal,
         sessionKey,
+        nativeContinueAction: p.nativeContinueAction,
         conversationText: extractAgentNexusRuntimeConversationText(
           readAgentNexusRuntimeConversationMessages({
             sessionKey,

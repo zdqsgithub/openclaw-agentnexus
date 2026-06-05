@@ -1,4 +1,4 @@
-type RuntimeToolName =
+export type RuntimeToolName =
   | "web_search"
   | "sheets_read_range"
   | "sheets_get_metadata"
@@ -45,6 +45,18 @@ export type AgentNexusRuntimeToolRequest = {
     | "runtime_session_export";
 };
 
+export type AgentNexusRuntimeNativeContinueAction = {
+  mode: "retry_with_runtime_acknowledgement";
+  retryToolRequest: {
+    tool: RuntimeToolName;
+    args: Record<string, unknown>;
+    redacted: true;
+  };
+  riskAcknowledgementArgument?: string;
+  runtimeRiskAcknowledgementArgument?: string;
+  argumentValue?: boolean;
+};
+
 export type AgentNexusRuntimeToolConfig = {
   gatewayUrl: string;
   manifestUrl?: string;
@@ -81,6 +93,7 @@ type AgentNexusRuntimeRiskWarningUi = {
   acknowledgementPhrase?: string;
   disclaimer?: string;
   riskFeeBillingState?: string;
+  nativeContinueAction?: AgentNexusRuntimeNativeContinueAction;
   redacted: true;
 };
 
@@ -265,6 +278,7 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
   signal?: AbortSignal;
   conversationText?: string;
   sessionKey?: string;
+  nativeContinueAction?: unknown;
 }): Promise<AgentNexusRuntimeTextReply | null> {
   const previousGoogleSheetsReply = buildPreviousGoogleSheetsFollowUpReply(options.text, options.conversationText) ??
     buildPreviousGoogleSheetsFollowUpReplyFromCache({
@@ -295,7 +309,11 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
-  const request = resolveAcknowledgedRuntimeToolRequest({
+  const nativeContinueRequest = resolveNativeContinueRuntimeToolRequest({
+    value: options.nativeContinueAction,
+    text: options.text,
+  });
+  const request = nativeContinueRequest ?? resolveAcknowledgedRuntimeToolRequest({
     text: options.text,
     conversationText: options.conversationText,
     now: options.now,
@@ -339,13 +357,15 @@ export async function resolveAgentNexusRuntimeTextReply(options: {
     };
   }
 
-  const runtimeRiskAcknowledged = hasRuntimeRiskAcknowledgement(options.text);
-  const canAttemptSessionLeaseExecution = canAttemptRuntimeSessionLeaseExecution({
-    request,
-    text: options.text,
-    conversationText: options.conversationText,
-  });
-  const riskDisclosure = canAttemptSessionLeaseExecution
+  const runtimeRiskAcknowledged = Boolean(nativeContinueRequest) || hasRuntimeRiskAcknowledgement(options.text);
+  const canAttemptSessionLeaseExecution = nativeContinueRequest
+    ? false
+    : canAttemptRuntimeSessionLeaseExecution({
+        request,
+        text: options.text,
+        conversationText: options.conversationText,
+      });
+  const riskDisclosure = nativeContinueRequest || canAttemptSessionLeaseExecution
     ? null
     : await fetchAgentNexusRuntimeRiskDisclosure({
       config,
@@ -696,6 +716,7 @@ export function formatAgentNexusRuntimeToolAnswer(params: {
         params.request,
         runtimeUiToRiskDisclosure(runtimeUi),
         runtimeUi.acknowledgementPhrase,
+        runtimeUi.nativeContinueAction,
       );
     }
     const error = typeof params.result.body.error === "string"
@@ -1091,6 +1112,7 @@ function readRuntimeRiskWarningUi(body: Record<string, unknown>): AgentNexusRunt
     const acknowledgementPhrase = typeof record.acknowledgementPhrase === "string"
       ? sanitizeOneLine(record.acknowledgementPhrase, 600)
       : undefined;
+    const nativeContinueAction = normalizeRuntimeNativeContinueAction(record.continueAction);
     return {
       component: "native_tool_warning_ack_modal",
       ...(typeof record.title === "string" ? { title: sanitizeOneLine(record.title, 120) } : {}),
@@ -1102,6 +1124,7 @@ function readRuntimeRiskWarningUi(body: Record<string, unknown>): AgentNexusRunt
       ...(typeof riskFeePreview.billingState === "string"
         ? { riskFeeBillingState: sanitizeOneLine(riskFeePreview.billingState, 120) }
         : {}),
+      ...(nativeContinueAction ? { nativeContinueAction } : {}),
       redacted: true,
     };
   }
@@ -1114,6 +1137,172 @@ function readNestedRuntimeUi(value: unknown): unknown {
   }
   const record = value as Record<string, unknown>;
   return record.runtimeUi ?? readNestedRuntimeUi(record.riskWarning);
+}
+
+function resolveNativeContinueRuntimeToolRequest(options: {
+  value: unknown;
+  text: string;
+}): AgentNexusRuntimeToolRequest | null {
+  if (!hasRuntimeRiskAcknowledgement(options.text)) {
+    return null;
+  }
+  const action = normalizeRuntimeNativeContinueAction(options.value);
+  if (!action) {
+    return null;
+  }
+  if (readAcknowledgedRuntimeToolName(options.text) !== action.retryToolRequest.tool) {
+    return null;
+  }
+  return {
+    tool: action.retryToolRequest.tool,
+    intent: runtimeToolIntent(action.retryToolRequest.tool),
+    args: action.retryToolRequest.args,
+  };
+}
+
+function normalizeRuntimeNativeContinueAction(value: unknown): AgentNexusRuntimeNativeContinueAction | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.mode !== "retry_with_runtime_acknowledgement") {
+    return null;
+  }
+  const retryToolRequest = normalizeRuntimeRetryToolRequest(record.retryToolRequest);
+  if (!retryToolRequest) {
+    return null;
+  }
+  const riskAcknowledgementArgument = typeof record.riskAcknowledgementArgument === "string"
+    ? sanitizeOneLine(record.riskAcknowledgementArgument, 80)
+    : undefined;
+  const runtimeRiskAcknowledgementArgument = typeof record.runtimeRiskAcknowledgementArgument === "string"
+    ? sanitizeOneLine(record.runtimeRiskAcknowledgementArgument, 80)
+    : undefined;
+  return {
+    mode: "retry_with_runtime_acknowledgement",
+    retryToolRequest,
+    ...(riskAcknowledgementArgument ? { riskAcknowledgementArgument } : {}),
+    ...(runtimeRiskAcknowledgementArgument ? { runtimeRiskAcknowledgementArgument } : {}),
+    ...(typeof record.argumentValue === "boolean" ? { argumentValue: record.argumentValue } : {}),
+  };
+}
+
+function normalizeRuntimeRetryToolRequest(value: unknown): AgentNexusRuntimeNativeContinueAction["retryToolRequest"] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.redacted !== true) {
+    return null;
+  }
+  const tool = normalizeRuntimeToolName(record.tool);
+  if (!tool) {
+    return null;
+  }
+  const args = normalizeRuntimeToolArgs(record.args);
+  if (!args) {
+    return null;
+  }
+  return {
+    tool,
+    args,
+    redacted: true,
+  };
+}
+
+function normalizeRuntimeToolName(value: unknown): RuntimeToolName | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "web_search" ||
+    normalized === "sheets_read_range" ||
+    normalized === "sheets_get_metadata" ||
+    normalized === "calendar_list_events" ||
+    normalized === "github_public_repo_read" ||
+    normalized === "runtime_skill_execute" ||
+    normalized === "runtime_cron_request" ||
+    normalized === "channel_publish_preview" ||
+    normalized === "runtime_session_export"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function runtimeToolIntent(tool: RuntimeToolName): AgentNexusRuntimeToolRequest["intent"] {
+  switch (tool) {
+    case "web_search":
+      return "web_search";
+    case "sheets_read_range":
+    case "sheets_get_metadata":
+      return "google_sheets_read";
+    case "calendar_list_events":
+      return "google_calendar_read";
+    case "github_public_repo_read":
+      return "github_public_repo_read";
+    case "runtime_skill_execute":
+      return "governed_skill";
+    case "runtime_cron_request":
+      return "runtime_cron_request";
+    case "channel_publish_preview":
+      return "channel_publish_preview";
+    case "runtime_session_export":
+      return "runtime_session_export";
+  }
+  const unsupported: never = tool;
+  void unsupported;
+  throw new Error("Unsupported runtime tool.");
+}
+
+function normalizeRuntimeToolArgs(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const normalized = normalizeRuntimeToolJsonValue(value, 0);
+  return normalized && typeof normalized === "object" && !Array.isArray(normalized)
+    ? normalized as Record<string, unknown>
+    : null;
+}
+
+function normalizeRuntimeToolJsonValue(value: unknown, depth: number): unknown {
+  if (depth > 5) {
+    return undefined;
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return Number.isFinite(value as number) || typeof value !== "number" ? value : undefined;
+  }
+  if (typeof value === "string") {
+    return sanitizeOneLine(value, 2_000);
+  }
+  if (Array.isArray(value)) {
+    const entries = value
+      .slice(0, 50)
+      .map((entry) => normalizeRuntimeToolJsonValue(entry, depth + 1))
+      .filter((entry) => entry !== undefined);
+    return entries;
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>).slice(0, 80)) {
+    const normalizedKey = sanitizeOneLine(key, 120);
+    if (!normalizedKey || isSensitiveRuntimeToolArgKey(normalizedKey)) {
+      return undefined;
+    }
+    const normalizedValue = normalizeRuntimeToolJsonValue(nested, depth + 1);
+    if (normalizedValue !== undefined) {
+      result[normalizedKey] = normalizedValue;
+    }
+  }
+  return result;
+}
+
+function isSensitiveRuntimeToolArgKey(key: string): boolean {
+  return /(?:authorization|bearer|cookie|oauth|password|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)/i
+    .test(key);
 }
 
 function runtimeUiToRiskDisclosure(ui: AgentNexusRuntimeRiskWarningUi): AgentNexusRuntimeRiskDisclosure {
@@ -1390,8 +1579,12 @@ function formatRuntimeAcknowledgementPrompt(
   request: AgentNexusRuntimeToolRequest,
   disclosure: AgentNexusRuntimeRiskDisclosure | null | undefined,
   acknowledgementPhrase?: string,
+  nativeContinueAction?: AgentNexusRuntimeNativeContinueAction,
 ) {
   const riskBlock = formatRuntimeRiskDisclosureBlock(disclosure);
+  const nativeContinueComment = nativeContinueAction
+    ? formatRuntimeNativeContinueActionMarkdownComment(nativeContinueAction)
+    : null;
   return [
     "## Native tool acknowledgement required",
     "",
@@ -1404,7 +1597,14 @@ function formatRuntimeAcknowledgementPrompt(
     "- **Acknowledgement effect:** action will run after explicit acknowledgement; no hidden block is applied",
     "",
     `**To continue, reply:** \`${acknowledgementPhrase ?? formatRuntimeAcknowledgementPhrase(request)}\``,
+    ...(nativeContinueComment ? ["", nativeContinueComment] : []),
   ].join("\n");
+}
+
+function formatRuntimeNativeContinueActionMarkdownComment(
+  action: AgentNexusRuntimeNativeContinueAction,
+): string {
+  return `<!-- agentnexus-runtime-native-continue-action:${encodeURIComponent(JSON.stringify(action))} -->`;
 }
 
 function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolRequest) {

@@ -548,6 +548,102 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
   });
 
+  it("executes structured native Continue retryToolRequest with runtime acknowledgement flags", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      expect(target).toBe("https://agtnx.ai/api/runtime/tools/execute");
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const body = JSON.parse(rawBody) as {
+        tool?: string;
+        args?: Record<string, unknown>;
+      };
+      expect(body).toEqual({
+        tool: "github_public_repo_read",
+        args: expect.objectContaining({
+          url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+          runtimeSessionId: "runtime-session-github-main",
+          riskAcknowledgement: true,
+          runtimeRiskAcknowledgement: true,
+          acknowledgementSurface: "agentc_runtime_prompt",
+        }),
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              repo: "zdqsgithub/openclaw-agentnexus",
+              path: "README.md",
+              excerpt: "Runtime Tool Gateway client documentation.",
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run github_public_repo_read",
+      nativeContinueAction: {
+        mode: "retry_with_runtime_acknowledgement",
+        riskAcknowledgementArgument: "riskAcknowledgement",
+        runtimeRiskAcknowledgementArgument: "runtimeRiskAcknowledgement",
+        retryToolRequest: {
+          tool: "github_public_repo_read",
+          args: {
+            url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+            runtimeSessionId: "runtime-session-github-main",
+          },
+          redacted: true,
+        },
+      },
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & {
+      nativeContinueAction: unknown;
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(reply?.content).toContain("Public GitHub repo read completed through AgentNexus Tool Gateway.");
+    expect(reply?.content).toContain("repo: zdqsgithub/openclaw-agentnexus");
+    expect(reply?.content).not.toContain("Native tool acknowledgement required");
+    expect(reply?.content).not.toMatch(/Bearer runtime-token|active insurance coverage|guaranteed payout|AgentNexus underwrites/i);
+  });
+
+  it("does not execute structured native Continue when the acknowledgement tool mismatches", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("Tool Gateway should not be called for a mismatched native Continue action.");
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run web_search",
+      nativeContinueAction: {
+        mode: "retry_with_runtime_acknowledgement",
+        retryToolRequest: {
+          tool: "github_public_repo_read",
+          args: {
+            url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+          },
+          redacted: true,
+        },
+      },
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+      fetchFn,
+    } as Parameters<typeof resolveAgentNexusRuntimeTextReply>[0] & {
+      nativeContinueAction: unknown;
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(reply).toBeNull();
+  });
+
   it("executes governed skills after the native runtime Continue acknowledgement phrase", async () => {
     const fetchFn = vi.fn(async (url: string | URL | Request) => {
       const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
