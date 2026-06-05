@@ -1195,6 +1195,220 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
+  it("recovers a Google Sheets metadata prompt when the visible acknowledgement phrase is redacted", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "sheets_get_metadata",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      expect(body).toMatchObject({
+        tool: "sheets_get_metadata",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          fields: "spreadsheetId,properties.title,sheets.properties",
+          riskAcknowledgement: true,
+          runtimeRiskAcknowledgement: true,
+        },
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            result: {
+              source: "public Google Sheets metadata",
+              resultType: "spreadsheet_metadata",
+              sheetCount: 1,
+              rowCountMax: 20,
+              columnCountMax: 8,
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const reply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run sheets_get_metadata",
+      fetchFn,
+      conversationText: [
+        "user: Use AgentNexus Tool Gateway action sheets_get_metadata for this authorized or link-readable Google Sheet.",
+        "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+        "Return redacted spreadsheet_metadata only with source, resultType, sheetCount, rowCountMax, and columnCountMax.",
+        "assistant: ## Native tool acknowledgement required",
+        "- **Action:** `sheets_get_metadata`",
+        "- **Intent:** `google_sheets_read`",
+        "**To continue, reply:** `I acknowledge AgentC native risk and run sheets_get_metadata`",
+      ].join("\n"),
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(reply?.content).toContain("source: public Google Sheets metadata");
+    expect(reply?.content).toContain("resultType: spreadsheet_metadata");
+    expect(reply?.content).toContain("sheetCount: 1");
+    expect(reply?.content).not.toContain("Risk acknowledgement noted");
+    expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
+  it("continues Google Sheets metadata from the same-session pending acknowledgement lease", async () => {
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (target.includes("/api/runtime/tools/manifest")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              manifest: {
+                tools: [
+                  {
+                    name: "sheets_get_metadata",
+                    riskDisclosure: {
+                      riskTier: "medium",
+                      warningMode: "warn_then_execute_when_eligible",
+                      acknowledgementSurface: "agentnexus_control_plane_or_runtime_prompt",
+                      userAcknowledgementRequired: true,
+                      riskFeeBillingState: "configured_not_charged",
+                      disclaimer:
+                        "governance_evidence_only_no_active_insurance_warranty_underwriting_indemnity_or_payout",
+                      hardBlockAfterAcknowledgement: false,
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        };
+      }
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      if (body.args && typeof body.args === "object" && "runtimeRiskAcknowledgement" in body.args) {
+        expect(body).toMatchObject({
+          tool: "sheets_get_metadata",
+          args: {
+            spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+            fields: "spreadsheetId,properties.title,sheets.properties",
+            riskAcknowledgement: true,
+            runtimeRiskAcknowledgement: true,
+          },
+        });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              result: {
+                source: "public Google Sheets metadata",
+                resultType: "spreadsheet_metadata",
+                sheetCount: 1,
+                rowCountMax: 20,
+                columnCountMax: 8,
+                redacted: true,
+              },
+            },
+          }),
+        };
+      }
+      expect(body).toMatchObject({
+        tool: "sheets_get_metadata",
+        args: {
+          spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+          fields: "spreadsheetId,properties.title,sheets.properties",
+        },
+      });
+      return {
+        ok: false,
+        status: 428,
+        json: async () => ({
+          code: "RUNTIME_TOOL_RISK_ACK_REQUIRED",
+          error: "Native tool risk acknowledgement required.",
+          riskWarning: {
+            runtimeUi: {
+              component: "native_tool_warning_ack_modal",
+              title: "Native tool acknowledgement required",
+              riskTier: "medium",
+              toolId: "sheets_get_metadata",
+              acknowledgementPhrase: "I acknowledge AgentC native risk and run sheets_get_metadata",
+              redacted: true,
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const firstReply = await resolveAgentNexusRuntimeTextReply({
+      text: [
+        "Use AgentNexus Tool Gateway action sheets_get_metadata for this authorized or link-readable Google Sheet.",
+        "https://docs.google.com/spreadsheets/d/1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg/edit?gid=0#gid=0",
+        "Return redacted spreadsheet_metadata only.",
+      ].join("\n"),
+      fetchFn,
+      sessionKey: "agent:main:gws-pending-ack",
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(firstReply?.content).toContain("## Native tool acknowledgement required");
+    expect(firstReply?.content).toContain("agentnexus-runtime-native-continue-action");
+    expect(firstReply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+    const marker = firstReply?.content.match(/agentnexus-runtime-native-continue-action:\s*([^\s]+)\s*-->/i)?.[1];
+    expect(marker).toBeTruthy();
+    const nativeContinueAction = JSON.parse(decodeURIComponent(marker ?? "")) as {
+      retryToolRequest?: { args?: Record<string, unknown> };
+    };
+    expect(nativeContinueAction.retryToolRequest?.args).toEqual({
+      pendingSessionAcknowledgementRequest: true,
+    });
+
+    const secondReply = await resolveAgentNexusRuntimeTextReply({
+      text: "I acknowledge AgentC native risk and run sheets_get_metadata",
+      fetchFn,
+      sessionKey: "agent:main:gws-pending-ack",
+      nativeContinueAction,
+      env: {
+        AGENTNEXUS_TOOL_GATEWAY_URL: "https://agtnx.ai/api/runtime/tools/execute",
+        AGENTNEXUS_TOOL_MANIFEST_URL: "https://agtnx.ai/api/runtime/tools/manifest",
+        AGENTNEXUS_RUNTIME_TOKEN: "runtime-token",
+      },
+    });
+
+    expect(secondReply?.content).toContain("source: public Google Sheets metadata");
+    expect(secondReply?.content).toContain("resultType: spreadsheet_metadata");
+    expect(secondReply?.content).not.toContain("Native tool acknowledgement required");
+    expect(secondReply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+  });
+
   it("executes Google Sheets read from the full acknowledgement phrase without conversation history", async () => {
     const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
