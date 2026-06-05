@@ -1517,7 +1517,8 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       expect(res.status).toBe(200);
       const json = (await res.json()) as Record<string, unknown>;
       const choice = ((json.choices as Array<Record<string, unknown>> | undefined) ?? [])[0];
-      const message = String((choice?.message as Record<string, unknown> | undefined)?.content ?? "");
+      const content = (choice?.message as Record<string, unknown> | undefined)?.content;
+      const message = typeof content === "string" ? content : JSON.stringify(content ?? "");
       expect(message).toContain("source: public Google Sheets read");
       expect(message).toContain("range: Sheet1!A1:Z20");
       expect(message).toContain("rowCount: 20");

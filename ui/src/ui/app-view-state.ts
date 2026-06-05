@@ -446,7 +446,10 @@ export type AppViewState = {
     handleRunUpdate: () => Promise<void>;
     setPassword: (next: string) => void;
     setChatMessage: (next: string) => void;
-    handleSendChat: (messageOverride?: string, opts?: { restoreDraft?: boolean }) => Promise<void>;
+    handleSendChat: (
+      messageOverride?: string,
+      opts?: { restoreDraft?: boolean; nativeContinueAction?: unknown },
+    ) => Promise<void>;
     toggleRealtimeTalk: () => Promise<void>;
     steerQueuedChatMessage: (id: string) => Promise<void>;
     handleAbortChat: () => Promise<void>;

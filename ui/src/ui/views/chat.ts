@@ -14,6 +14,7 @@ import { renderContextNotice } from "../chat/context-notice.ts";
 import { DeletedMessages } from "../chat/deleted-messages.ts";
 import { exportChatMarkdown } from "../chat/export.ts";
 import {
+  type AgentCRuntimeNativeContinueAction,
   renderMessageGroup,
   renderReadingIndicatorGroup,
   renderStreamingGroup,
@@ -101,7 +102,10 @@ export type ChatProps = {
   onDraftChange: (next: string) => void;
   onRequestUpdate?: () => void;
   onSend: () => void;
-  onSendText?: (text: string) => void;
+  onSendText?: (
+    text: string,
+    opts?: { nativeContinueAction?: AgentCRuntimeNativeContinueAction },
+  ) => void;
   onCompact?: () => void | Promise<void>;
   onToggleRealtimeTalk?: () => void;
   onAbort?: () => void;
@@ -872,8 +876,15 @@ export function renderChat(props: ChatProps) {
                 allowExternalEmbedUrls: props.allowExternalEmbedUrls ?? false,
                 contextWindow:
                   activeSession?.contextTokens ?? props.sessions?.defaults?.contextTokens ?? null,
-                onRiskAcknowledgementContinue: (phrase: string) => {
+                onRiskAcknowledgementContinue: (
+                  phrase: string,
+                  nativeContinueAction?: AgentCRuntimeNativeContinueAction,
+                ) => {
                   if (props.onSendText) {
+                    if (nativeContinueAction) {
+                      props.onSendText(phrase, { nativeContinueAction });
+                      return;
+                    }
                     props.onSendText(phrase);
                     return;
                   }

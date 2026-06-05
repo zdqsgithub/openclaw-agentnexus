@@ -73,6 +73,7 @@ type OpenAiChatCompletionRequest = {
   stream_options?: unknown;
   messages?: unknown;
   user?: unknown;
+  agentnexus?: unknown;
 };
 
 const AGENTNEXUS_DIRECT_OPENROUTER_CHAT_ENV = "AGENTNEXUS_DIRECT_OPENROUTER_CHAT";
@@ -355,6 +356,7 @@ async function handleAgentNexusRuntimeToolGatewayChat(params: {
   const reply = await resolveAgentNexusRuntimeTextReply({
     text: userText,
     signal: params.signal,
+    nativeContinueAction: readOpenAiAgentNexusNativeContinueAction(params.payload.agentnexus),
     conversationText: extractAgentNexusRuntimeConversationText(asMessages(params.payload.messages)),
   });
   if (!reply) {
@@ -371,6 +373,14 @@ async function handleAgentNexusRuntimeToolGatewayChat(params: {
     adapter: reply.adapter,
   });
   return true;
+}
+
+function readOpenAiAgentNexusNativeContinueAction(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.nativeContinueAction;
 }
 
 function postOpenRouterJson(params: {

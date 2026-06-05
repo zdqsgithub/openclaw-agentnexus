@@ -404,6 +404,66 @@ describe("grouped chat rendering", () => {
     );
   });
 
+  it("passes structured native Continue action from acknowledgement markdown to the card callback", () => {
+    const container = document.createElement("div");
+    const onContinue = vi.fn();
+    const nativeContinueAction = encodeURIComponent(JSON.stringify({
+      mode: "retry_with_runtime_acknowledgement",
+      retryToolRequest: {
+        tool: "github_public_repo_read",
+        args: {
+          url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+          runtimeSessionId: "runtime-session-github-main",
+        },
+        redacted: true,
+      },
+    }));
+
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "## Native tool acknowledgement required",
+              "",
+              "AgentC can continue with this high-risk native action after you explicitly acknowledge the risk.",
+              "",
+              "- **Action:** `github_public_repo_read`",
+              "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+              "",
+              "**To continue, reply:** `I acknowledge AgentC native risk and run github_public_repo_read`",
+              "",
+              `<!-- agentnexus-runtime-native-continue-action:${nativeContinueAction} -->`,
+            ].join("\n"),
+          },
+        ],
+      },
+      {
+        onRiskAcknowledgementContinue: onContinue,
+      } as Partial<RenderMessageGroupOptions>,
+    );
+
+    container.querySelector<HTMLButtonElement>('[data-agentc-runtime-risk-ack-continue="true"]')?.click();
+
+    expect(onContinue).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run github_public_repo_read",
+      {
+        mode: "retry_with_runtime_acknowledgement",
+        retryToolRequest: {
+          tool: "github_public_repo_read",
+          args: {
+            url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+            runtimeSessionId: "runtime-session-github-main",
+          },
+          redacted: true,
+        },
+      },
+    );
+  });
+
   it("positions delete confirm by message side", () => {
     const container = document.createElement("div");
     clearDeleteConfirmSkip();

@@ -678,6 +678,49 @@ describe("handleSendChat", () => {
     expect(host.chatMessage).toBe("");
   });
 
+  it("passes structured native Continue action through chat.send", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "chat.send") {
+        return { status: "started", runId: "risk-ack-run" };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const nativeContinueAction = {
+      mode: "retry_with_runtime_acknowledgement",
+      retryToolRequest: {
+        tool: "github_public_repo_read",
+        args: {
+          url: "https://github.com/zdqsgithub/openclaw-agentnexus",
+          runtimeSessionId: "runtime-session-github-main",
+        },
+        redacted: true,
+      },
+    };
+    const acknowledgement = "I acknowledge AgentC native risk and run github_public_repo_read";
+    const host = makeHost({
+      client: { request } as unknown as ChatHost["client"],
+      chatRunId: "run-1",
+      chatStream: "Native tool acknowledgement required",
+      chatMessage: acknowledgement,
+      sessionKey: "agent:main:main",
+    });
+
+    await handleSendChat(host, acknowledgement, { nativeContinueAction } as Parameters<typeof handleSendChat>[2] & {
+      nativeContinueAction: unknown;
+    });
+
+    expect(request).toHaveBeenCalledWith("chat.send", {
+      sessionKey: "agent:main:main",
+      message: acknowledgement,
+      deliver: false,
+      idempotencyKey: expect.any(String),
+      attachments: undefined,
+      nativeContinueAction,
+    });
+    expect(host.chatQueue).toEqual([]);
+    expect(host.chatRunId).toBe("run-1");
+  });
+
   it("removes pending steer indicators when the run finishes", async () => {
     const host = makeHost({
       chatQueue: [

@@ -181,12 +181,18 @@ async function sendChatMessageNow(
     previousAttachments?: ChatAttachment[];
     restoreAttachments?: boolean;
     refreshSessions?: boolean;
+    nativeContinueAction?: unknown;
   },
 ) {
   resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
   // Reset scroll state before sending to ensure auto-scroll works for the response
   resetChatScroll(host as unknown as Parameters<typeof resetChatScroll>[0]);
-  const runId = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
+  const runId = await sendChatMessage(
+    host as unknown as ChatState,
+    message,
+    opts?.attachments,
+    opts?.nativeContinueAction,
+  );
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
@@ -224,12 +230,14 @@ async function sendDetachedBtwMessage(
     previousDraft?: string;
     attachments?: ChatAttachment[];
     previousAttachments?: ChatAttachment[];
+    nativeContinueAction?: unknown;
   },
 ) {
   const runId = await sendDetachedChatMessage(
     host as unknown as ChatState,
     message,
     opts?.attachments,
+    opts?.nativeContinueAction,
   );
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
@@ -330,7 +338,7 @@ export function clearPendingQueueItemsForRun(host: ChatHost, runId: string | und
 export async function handleSendChat(
   host: ChatHost,
   messageOverride?: string,
-  opts?: { restoreDraft?: boolean },
+  opts?: { restoreDraft?: boolean; nativeContinueAction?: unknown },
 ) {
   if (!host.connected) {
     return;
@@ -401,7 +409,12 @@ export async function handleSendChat(
         host.chatMessage = "";
         host.chatAttachments = [];
       }
-      const runId = await sendSteerChatMessage(host as unknown as ChatState, message);
+      const runId = await sendSteerChatMessage(
+        host as unknown as ChatState,
+        message,
+        undefined,
+        opts?.nativeContinueAction,
+      );
       if (runId) {
         setLastActiveSessionKey(
           host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
@@ -425,6 +438,7 @@ export async function handleSendChat(
     previousAttachments: messageOverride == null ? attachments : undefined,
     restoreAttachments: Boolean(messageOverride && opts?.restoreDraft),
     refreshSessions,
+    nativeContinueAction: opts?.nativeContinueAction,
   });
 }
 
