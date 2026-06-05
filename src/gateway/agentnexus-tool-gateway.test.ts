@@ -1261,7 +1261,7 @@ describe("AgentNexus runtime Tool Gateway client", () => {
     expect(reply?.content).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
   });
 
-  it("includes spreadsheet metadata context in the runtime acknowledgement phrase", () => {
+  it("redacts spreadsheet metadata context from the visible runtime acknowledgement phrase", () => {
     const answer = formatAgentNexusRuntimeToolAnswer({
       request: {
         tool: "sheets_get_metadata",
@@ -1281,15 +1281,32 @@ describe("AgentNexus runtime Tool Gateway client", () => {
             title: "Native tool acknowledgement required",
             riskTier: "medium",
             toolId: "sheets_get_metadata",
+            acknowledgementPhrase:
+              "I acknowledge AgentC native risk and run sheets_get_metadata for: spreadsheet=1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg; fields=spreadsheetId,properties.title,sheets.properties",
+            continueAction: {
+              mode: "retry_with_runtime_acknowledgement",
+              retryToolRequest: {
+                tool: "sheets_get_metadata",
+                args: {
+                  spreadsheetId: "1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg",
+                  fields: "spreadsheetId,properties.title,sheets.properties",
+                },
+                redacted: true,
+              },
+              riskAcknowledgementArgument: "riskAcknowledgement",
+              runtimeRiskAcknowledgementArgument: "runtimeRiskAcknowledgement",
+              argumentValue: true,
+            },
             redacted: true,
           },
         },
       },
     });
 
-    expect(answer).toContain(
-      "I acknowledge AgentC native risk and run sheets_get_metadata for: spreadsheet=1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg; fields=spreadsheetId,properties.title,sheets.properties",
-    );
+    const visibleAcknowledgementPhrase = answer.match(/\*\*To continue,\s*reply:\*\*\s*`([^`]+)`/i)?.[1] ?? "";
+    expect(visibleAcknowledgementPhrase).toBe("I acknowledge AgentC native risk and run sheets_get_metadata");
+    expect(visibleAcknowledgementPhrase).not.toContain("1-fgOfxIyWxAirwmfuphvBUG31kVyW54ytvLUNW4yeFg");
+    expect(visibleAcknowledgementPhrase).not.toContain("spreadsheetId,properties.title,sheets.properties");
   });
 
   it("executes Google Sheets metadata from the full acknowledgement phrase without conversation history", async () => {

@@ -1198,10 +1198,14 @@ function readRuntimeRiskWarningUi(body: Record<string, unknown>): AgentNexusRunt
         !Array.isArray(record.riskFeePreview)
       ? record.riskFeePreview as Record<string, unknown>
       : {};
-    const acknowledgementPhrase = typeof record.acknowledgementPhrase === "string"
-      ? sanitizeOneLine(record.acknowledgementPhrase, 600)
-      : undefined;
     const nativeContinueAction = normalizeRuntimeNativeContinueAction(record.continueAction);
+    const runtimeToolId = normalizeRuntimeToolName(record.toolId);
+    const acknowledgementPhrase = typeof record.acknowledgementPhrase === "string"
+      ? redactRuntimeVisibleAcknowledgementPhrase(
+        record.acknowledgementPhrase,
+        nativeContinueAction?.retryToolRequest.tool ?? runtimeToolId ?? undefined,
+      )
+      : undefined;
     return {
       component: "native_tool_warning_ack_modal",
       ...(typeof record.title === "string" ? { title: sanitizeOneLine(record.title, 120) } : {}),
@@ -1218,6 +1222,18 @@ function readRuntimeRiskWarningUi(body: Record<string, unknown>): AgentNexusRunt
     };
   }
   return null;
+}
+
+function redactRuntimeVisibleAcknowledgementPhrase(value: string, toolName?: RuntimeToolName) {
+  const phrase = sanitizeOneLine(value, 600);
+  const acknowledgedTool = toolName ?? readAcknowledgedRuntimeToolName(phrase);
+  if (acknowledgedTool === "sheets_read_range" || acknowledgedTool === "sheets_get_metadata") {
+    return `I acknowledge AgentC native risk and run ${acknowledgedTool}`;
+  }
+  return phrase
+    .replace(/\bspreadsheet(?:Id)?\s*=\s*[^;`]+/giu, "spreadsheet=[redacted-resource]")
+    .replace(/\bfields\s*=\s*[^;`]+/giu, "fields=[redacted]")
+    .replace(/\brange\s*=\s*[^;`]+/giu, "range=[redacted]");
 }
 
 function readNestedRuntimeUi(value: unknown): unknown {
@@ -1698,6 +1714,9 @@ function formatRuntimeNativeContinueActionMarkdownComment(
 
 function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolRequest) {
   const base = `I acknowledge AgentC native risk and run ${request.tool}`;
+  if (request.tool === "sheets_read_range" || request.tool === "sheets_get_metadata") {
+    return base;
+  }
   if (request.tool === "web_search" && typeof request.args.query === "string" && request.args.query.trim()) {
     return `${base} for: ${sanitizeOneLine(request.args.query, 500)}`;
   }
@@ -1712,29 +1731,6 @@ function formatRuntimeAcknowledgementPhrase(request: AgentNexusRuntimeToolReques
       ? sanitizeOneLine(draft.summary, 180)
       : "Synthetic AgentC channel relay notification";
     return `${base} for: title=${title}; summary=${summary}; body=redacted`;
-  }
-  if (request.tool === "sheets_read_range") {
-    const spreadsheetId = typeof request.args.spreadsheetId === "string"
-      ? sanitizeGoogleSheetsSpreadsheetId(request.args.spreadsheetId)
-      : null;
-    const range = typeof request.args.range === "string" && request.args.range.trim()
-      ? sanitizeOneLine(request.args.range, 120)
-      : "Sheet1!A1:Z20";
-    const requestedWrite = request.args.requestedWrite === true ? "; requestedWrite=true" : "";
-    if (spreadsheetId) {
-      return `${base} for: spreadsheet=${spreadsheetId}; range=${range}${requestedWrite}`;
-    }
-  }
-  if (request.tool === "sheets_get_metadata") {
-    const spreadsheetId = typeof request.args.spreadsheetId === "string"
-      ? sanitizeGoogleSheetsSpreadsheetId(request.args.spreadsheetId)
-      : null;
-    const fields = typeof request.args.fields === "string" && request.args.fields.trim()
-      ? sanitizeOneLine(request.args.fields, 240)
-      : GOOGLE_SHEETS_METADATA_FIELDS;
-    if (spreadsheetId) {
-      return `${base} for: spreadsheet=${spreadsheetId}; fields=${fields}`;
-    }
   }
   if (request.tool === "github_public_repo_read") {
     const url = typeof request.args.url === "string" ? extractPublicGitHubRepoUrl(request.args.url) : null;
