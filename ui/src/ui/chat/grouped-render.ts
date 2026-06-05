@@ -153,6 +153,12 @@ function extractRuntimeNativeContinueAction(markdown: string): AgentCRuntimeNati
   }
 }
 
+function stripRuntimeNativeContinueActionMarkdownComments(markdown: string): string {
+  return markdown
+    .replace(/<!--\s*agentnexus-runtime-native-continue-action:\s*[^\s]+\s*-->\s*/gi, "")
+    .trimEnd();
+}
+
 type RuntimeRiskAcknowledgementActions = {
   onRiskAcknowledgementContinue?: (
     phrase: string,
@@ -166,11 +172,15 @@ function renderChatMarkdown(
   normalizedRole: string,
   actions: RuntimeRiskAcknowledgementActions = {},
 ) {
-  const body = html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-    ${unsafeHTML(renderChatTextHtml(markdown, normalizedRole))}
+  const riskAcknowledgementMarkdown = isAgentCRuntimeRiskAcknowledgementMarkdown(markdown, normalizedRole);
+  const displayMarkdown = riskAcknowledgementMarkdown
+    ? stripRuntimeNativeContinueActionMarkdownComments(markdown)
+    : markdown;
+  const body = html`<div class="chat-text" dir="${detectTextDirection(displayMarkdown)}">
+    ${unsafeHTML(renderChatTextHtml(displayMarkdown, normalizedRole))}
   </div>`;
 
-  if (!isAgentCRuntimeRiskAcknowledgementMarkdown(markdown, normalizedRole)) {
+  if (!riskAcknowledgementMarkdown) {
     return body;
   }
 

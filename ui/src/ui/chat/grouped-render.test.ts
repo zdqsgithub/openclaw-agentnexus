@@ -448,6 +448,11 @@ describe("grouped chat rendering", () => {
 
     container.querySelector<HTMLButtonElement>('[data-agentc-runtime-risk-ack-continue="true"]')?.click();
 
+    const card = container.querySelector<HTMLElement>('[data-agentc-runtime-risk-ack-card="true"]');
+    expect(card?.textContent).not.toContain("agentnexus-runtime-native-continue-action");
+    expect(card?.textContent).not.toContain("https://github.com/zdqsgithub/openclaw-agentnexus");
+    expect(card?.textContent).not.toContain("runtime-session-github-main");
+
     expect(onContinue).toHaveBeenCalledWith(
       "I acknowledge AgentC native risk and run github_public_repo_read",
       {
@@ -457,6 +462,71 @@ describe("grouped chat rendering", () => {
           args: {
             url: "https://github.com/zdqsgithub/openclaw-agentnexus",
             runtimeSessionId: "runtime-session-github-main",
+          },
+          redacted: true,
+        },
+      },
+    );
+  });
+
+  it("keeps private native Continue retry payloads out of visible acknowledgement card text", () => {
+    const container = document.createElement("div");
+    const onContinue = vi.fn();
+    const nativeContinueAction = encodeURIComponent(JSON.stringify({
+      mode: "retry_with_runtime_acknowledgement",
+      retryToolRequest: {
+        tool: "sheets_get_metadata",
+        args: {
+          spreadsheetId: "private-sheet-id-123",
+          runtimeSessionId: "runtime-session-gws-private",
+        },
+        redacted: true,
+      },
+    }));
+
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "## Native tool acknowledgement required",
+              "",
+              "- **Action:** `sheets_get_metadata`",
+              "- **Execution status:** `execution_status: waiting_for_user_acknowledgement`",
+              "",
+              "**To continue, reply:** `I acknowledge AgentC native risk and run sheets_get_metadata`",
+              "",
+              `<!-- agentnexus-runtime-native-continue-action:${nativeContinueAction} -->`,
+            ].join("\n"),
+          },
+        ],
+      },
+      {
+        onRiskAcknowledgementContinue: onContinue,
+      } as Partial<RenderMessageGroupOptions>,
+    );
+
+    const card = container.querySelector<HTMLElement>('[data-agentc-runtime-risk-ack-card="true"]');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain("Native tool acknowledgement required");
+    expect(card?.textContent).not.toContain("agentnexus-runtime-native-continue-action");
+    expect(card?.textContent).not.toContain("private-sheet-id-123");
+    expect(card?.textContent).not.toContain("runtime-session-gws-private");
+
+    container.querySelector<HTMLButtonElement>('[data-agentc-runtime-risk-ack-continue="true"]')?.click();
+
+    expect(onContinue).toHaveBeenCalledWith(
+      "I acknowledge AgentC native risk and run sheets_get_metadata",
+      {
+        mode: "retry_with_runtime_acknowledgement",
+        retryToolRequest: {
+          tool: "sheets_get_metadata",
+          args: {
+            spreadsheetId: "private-sheet-id-123",
+            runtimeSessionId: "runtime-session-gws-private",
           },
           redacted: true,
         },
